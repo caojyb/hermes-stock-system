@@ -14,6 +14,7 @@ Real Portfolio Truth Layer（Phase 5.5）
   ❌ cash / total_asset / 历史净值 → DATA_UNAVAILABLE
   → drawdown 历史峰值缺失 → drawdown_status=UNKNOWN（不伪造）
 """
+import os
 import json, subprocess
 from datetime import date, datetime, timezone
 from pathlib import Path
