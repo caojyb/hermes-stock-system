@@ -1,0 +1,15 @@
+{
+  "id": "f19c549b86dd",
+  "code": "600519",
+  "direction": "buy",
+  "price": 188.5,
+  "quantity": 100,
+  "amount": 18850.0,
+  "reason": "测试信号",
+  "strategy": "main_up",
+  "generated_at": "2026-07-26T15:54:15.997724",
+  "ttl": 3600,
+  "status": "executed",
+  "updated_at": "2026-07-26T15:55:27.031452",
+  "detail": "成交"
+}

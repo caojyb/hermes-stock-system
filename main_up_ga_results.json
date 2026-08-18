@@ -1,0 +1,79 @@
+{
+  "timestamp": "2026-08-01T19:54:37.686714",
+  "total_runs": 37,
+  "profitable_count": 0,
+  "top3": [
+    {
+      "params": {
+        "roe_min": 12.5,
+        "rsi_low": 45,
+        "rsi_high": 60,
+        "boll_low": 40,
+        "boll_high": 80,
+        "vol_rank_pct": 0.45
+      },
+      "metrics": {
+        "annual_return": -16.93,
+        "max_drawdown": 14.55,
+        "win_rate": 40.0,
+        "total_return": -7.44,
+        "sharpe": -0.79,
+        "calmar": -1.16,
+        "months": 5,
+        "trades": 46
+      },
+      "score": 6.556000000000001
+    },
+    {
+      "params": {
+        "roe_min": 17.5,
+        "rsi_low": 50,
+        "rsi_high": 60,
+        "boll_low": 40,
+        "boll_high": 80,
+        "vol_rank_pct": 0.5
+      },
+      "metrics": {
+        "annual_return": -14.83,
+        "max_drawdown": 20.46,
+        "win_rate": 40.0,
+        "total_return": -6.47,
+        "sharpe": -0.21,
+        "calmar": -0.72,
+        "months": 5,
+        "trades": 15
+      },
+      "score": 5.413
+    },
+    {
+      "params": {
+        "roe_min": 15.0,
+        "rsi_low": 40,
+        "rsi_high": 60,
+        "boll_low": 40,
+        "boll_high": 75,
+        "vol_rank_pct": 0.45
+      },
+      "metrics": {
+        "annual_return": -27.14,
+        "max_drawdown": 18.94,
+        "win_rate": 40.0,
+        "total_return": -12.36,
+        "sharpe": -1.21,
+        "calmar": -1.43,
+        "months": 5,
+        "trades": 28
+      },
+      "score": 2.176
+    }
+  ],
+  "has_profitable": false,
+  "param_impact": {
+    "roe_min": 4.67,
+    "rsi_low": 8.24,
+    "rsi_high": 13.88,
+    "boll_low": 9.73,
+    "boll_high": 26.21,
+    "vol_rank_pct": 19.7
+  }
+}

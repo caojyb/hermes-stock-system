@@ -1,0 +1,12 @@
+{
+  "signal_id": "backfill_000520_2026-07-14",
+  "code": "000520",
+  "direction": "buy",
+  "filled_price": 4.05,
+  "filled_quantity": 100,
+  "slippage": -0.49,
+  "status": "executed",
+  "filled_at": "2026-07-14",
+  "message": "正常成交",
+  "is_backfill": true
+}

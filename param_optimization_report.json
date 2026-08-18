@@ -1,0 +1,131 @@
+{
+  "timestamp": "2026-08-01T10:39:00.204130",
+  "total_runs": 40,
+  "profitable_count": 15,
+  "top5": [
+    {
+      "params": {
+        "price_pos_max": 30,
+        "vol_ratio_min": 3.0,
+        "mcap_min": 15,
+        "mcap_max": 90,
+        "turnover_min": 8000,
+        "atr_pct_min": 2
+      },
+      "metrics": {
+        "annual_return": 1865.99,
+        "max_drawdown": 13.41,
+        "win_rate": 33.3,
+        "total_return": 110.57,
+        "sharpe": 2.07,
+        "calmar": 139.14,
+        "profit_loss_ratio": 18.45,
+        "months": 3,
+        "trades": 18,
+        "gapup_fails": 0
+      },
+      "score": 752.363
+    },
+    {
+      "params": {
+        "price_pos_max": 30,
+        "vol_ratio_min": 2.7,
+        "mcap_min": 5,
+        "mcap_max": 70,
+        "turnover_min": 8000,
+        "atr_pct_min": 2
+      },
+      "metrics": {
+        "annual_return": 870.45,
+        "max_drawdown": 17.13,
+        "win_rate": 50.0,
+        "total_return": 113.3,
+        "sharpe": 1.76,
+        "calmar": 50.82,
+        "profit_loss_ratio": 8.33,
+        "months": 4,
+        "trades": 24,
+        "gapup_fails": 0
+      },
+      "score": 358.04100000000005
+    },
+    {
+      "params": {
+        "price_pos_max": 40,
+        "vol_ratio_min": 2.7,
+        "mcap_min": 5,
+        "mcap_max": 90,
+        "turnover_min": 8000,
+        "atr_pct_min": 3
+      },
+      "metrics": {
+        "annual_return": 372.81,
+        "max_drawdown": 13.68,
+        "win_rate": 75.0,
+        "total_return": 67.84,
+        "sharpe": 1.64,
+        "calmar": 27.25,
+        "profit_loss_ratio": 2.28,
+        "months": 4,
+        "trades": 37,
+        "gapup_fails": 0
+      },
+      "score": 167.51999999999998
+    },
+    {
+      "params": {
+        "price_pos_max": 50,
+        "vol_ratio_min": 2.7,
+        "mcap_min": 15,
+        "mcap_max": 40,
+        "turnover_min": 7000,
+        "atr_pct_min": 3
+      },
+      "metrics": {
+        "annual_return": 325.39,
+        "max_drawdown": 13.19,
+        "win_rate": 50.0,
+        "total_return": 62.03,
+        "sharpe": 1.79,
+        "calmar": 24.67,
+        "profit_loss_ratio": 4.74,
+        "months": 4,
+        "trades": 43,
+        "gapup_fails": 1
+      },
+      "score": 141.199
+    },
+    {
+      "params": {
+        "price_pos_max": 50,
+        "vol_ratio_min": 2.7,
+        "mcap_min": 15,
+        "mcap_max": 40,
+        "turnover_min": 7000,
+        "atr_pct_min": 3
+      },
+      "metrics": {
+        "annual_return": 325.39,
+        "max_drawdown": 13.19,
+        "win_rate": 50.0,
+        "total_return": 62.03,
+        "sharpe": 1.79,
+        "calmar": 24.67,
+        "profit_loss_ratio": 4.74,
+        "months": 4,
+        "trades": 43,
+        "gapup_fails": 1
+      },
+      "score": 141.199
+    }
+  ],
+  "has_profitable": true,
+  "param_impact": {
+    "price_pos_max": 616.5,
+    "vol_ratio_min": 435.2,
+    "mcap_max": 277.26,
+    "mcap_min": 257.23,
+    "turnover_min": 253.42,
+    "atr_pct_min": 213.07
+  }
+}

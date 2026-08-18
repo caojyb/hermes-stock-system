@@ -1,0 +1,74 @@
+# Hermes 股票系统 .gitignore（Phase G0 定制，非通用模板）
+
+# ═══ 数据库（绝不进 Git）═══
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+market_cache.db
+simulation.db
+simulation_test.db
+intraday_cache.db
+lhb_cache.db
+news_cache.db
+
+# ═══ 运行产物 / 缓存 / 临时文件 ═══
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.pytest/
+cache/
+tmp/
+runtime/
+logs/
+artifacts/
+snapshots/
+backups/
+*.log
+*.log.*
+
+# ═══ 决策快照 / 执行记录 / Outcome（运行数据，非架构样本）═══
+decision/snapshots/
+decision/executions/
+decision/outcomes/
+
+# ═══ 敏感配置（含真实账号/密码）═══
+emquant_config.json
+.env
+.env.*
+*.secret
+*.token
+credentials*
+*_credentials.json
+*_config.json
+
+# ═══ 备份文件（.bak 系列）═══
+*.bak_*
+*.bak
+*.backup
+
+# ═══ 系统文件 ═══
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.orig
+
+# ═══ 大文件 / 二进制 ═══
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.pdf
+*.zip
+*.tar.gz
+*.tar
+
+# ═══ 用户目录下 Hermes 数据 ═══
+/home/caojy/.hermes/data/
+/home/caojy/.hermes/venv/
+/home/caojy/.hermes/hermes-agent/venv/

@@ -1,0 +1,12 @@
+{
+  "signal_id": "backfill_000521_2026-07-24",
+  "code": "000521",
+  "direction": "buy",
+  "filled_price": 4.83,
+  "filled_quantity": 100,
+  "slippage": -0.62,
+  "status": "executed",
+  "filled_at": "2026-07-24",
+  "message": "正常成交",
+  "is_backfill": true
+}
