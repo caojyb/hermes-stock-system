@@ -138,6 +138,10 @@ class Outcome:
 
     # excursion
     excursion: Excursion = field(default_factory=Excursion)
+    # Phase 7.2: MAE/MFE from actual entry→exit K-line excursion
+    mae: float = 0.0
+    mfe: float = 0.0
+    mae_mfe_status: str = UNKNOWN  # COMPUTED / UNKNOWN / PARTIAL
 
     # market
     entry_regime: str = ''         # Phase 7.1: 决策时的 Regime

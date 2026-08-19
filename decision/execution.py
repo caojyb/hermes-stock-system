@@ -95,6 +95,9 @@ class Execution:
     planned_entry_price: float = 0.0  # 决策时的 planned entry price
     planned_entry_quantity: float = 0.0  # 决策时的 planned quantity
     decision_time: str = ''        # 决策生成时间
+    # Phase 7.2: Run Mode / Environment（生产/测试/仿真/主升浪/历史）
+    run_mode: str = ''             # PRODUCTION / SIMULATION / TEST / SHADOW / LEGACY / COUNTERFACTUAL
+    environment: str = ''          # 运行环境标识（与 run_mode 配合使用）
 
     def freeze(self) -> dict:
         return asdict(self)
@@ -134,7 +137,7 @@ def find_execution(decision_id):
 
 
 def record_simulation_execution(decision, action, entry_price, quantity, position=0.0,
-                                status=EXECUTED):
+                                status=EXECUTED, run_mode='SIMULATION', environment=''):
     """Simulation 自动写 Execution（关联 decision_id + position_id）。"""
     ex = Execution(
         decision_id=decision.get('decision_id', ''),
@@ -162,6 +165,9 @@ def record_simulation_execution(decision, action, entry_price, quantity, positio
         planned_entry_price=float(decision.get('reference_price', 0) or 0),
         planned_entry_quantity=float(decision.get('target_position', 0) or 0),
         decision_time=decision.get('timestamp', '') or _now(),
+        # Phase 7.2: Run Mode / Environment
+        run_mode=run_mode,
+        environment=environment,
     )
     # Phase 6.7：position_id 由 Entry Execution 自身生命周期标识
     if _normalize_action(action) in _exec_action_set() and status == EXECUTED:
@@ -171,7 +177,7 @@ def record_simulation_execution(decision, action, entry_price, quantity, positio
 
 
 def confirm_manual_execution(decision_id, actual_price, actual_quantity,
-                             execution_time, status, notes=''):
+                             execution_time, status, notes='', run_mode='', environment=''):
     """真实仓人工执行确认（用户在平安证券成交后回写）。"""
     exs = find_execution(decision_id)
     if exs:
@@ -182,13 +188,16 @@ def confirm_manual_execution(decision_id, actual_price, actual_quantity,
               'status': PLANNED, 'action': '', 'symbol': '', 'name': '',
               'strategy': 'v1_double', 'strategy_version': '', 'decision_snapshot_id': '',
               'portfolio_snapshot_id': '', 'execution_time': '', 'created_at': '',
-              'notes': ''}
+              'notes': '', 'run_mode': '', 'environment': ''}
         ex['execution_id'] = gen_exec_id()
     ex['status'] = status
     ex['source'] = SRC_MANUAL
     ex['actual'] = {'price': actual_price, 'quantity': actual_quantity, 'position': 0.0}
     ex['execution_time'] = execution_time or _now()
     ex['notes'] = notes
+    # Phase 7.2: Run Mode / Environment（人工确认时由调用方传入）
+    ex['run_mode'] = run_mode or ''
+    ex['environment'] = environment or ''
     if status == EXECUTED:
         ex['position_status'] = OPEN
     elif status == PARTIAL:
@@ -203,10 +212,11 @@ def confirm_manual_execution(decision_id, actual_price, actual_quantity,
 
 
 def record_exit(execution_id, exit_price, exit_quantity, exit_time, exit_reason, status='CLOSED',
-                entry_execution_id='', exit_decision_id=''):
+                entry_execution_id='', exit_decision_id='', exit_regime=''):
     """记录卖出/退出（人工或模拟），支持多段退出（TP1/TP2/TP3/REDUCE）。
     追加 exit segment，更新 Position Lifecycle；最终 CLOSED 后由 build_outcome 计算加权结果。
-    Phase 6.7：优先使用 entry_execution_id 精确关联，不依赖 symbol。"""
+    Phase 6.7：优先使用 entry_execution_id 精确关联，不依赖 symbol。
+    Phase 7.2：增加 exit_regime（来自 Exit Decision 当时的 Regime Snapshot）。"""
     ex = get_execution(execution_id)
     if not ex:
         # 若 execution_id 不存在但提供 entry_execution_id：回退到 entry 记录退出段
@@ -216,24 +226,31 @@ def record_exit(execution_id, exit_price, exit_quantity, exit_time, exit_reason,
         target.setdefault('exit_segments', []).append({
             'price': exit_price, 'quantity': exit_quantity,
             'time': exit_time or _now(), 'reason': map_exit_reason([exit_reason]),
-            'status': status, 'exit_decision_id': exit_decision_id, 'linkage': LINKAGE_FALLBACK,
+            'status': status, 'exit_decision_id': exit_decision_id,
+            'linkage': LINKAGE_FALLBACK,
+            # Phase 7.2: exit_regime
+            'exit_regime': exit_regime or '',
         })
         target['exit'] = {'price': exit_price, 'quantity': exit_quantity,
                           'time': exit_time or _now(), 'reason': map_exit_reason([exit_reason]),
-                          'status': status}
+                          'status': status, 'exit_regime': exit_regime or ''}
         target['position_status'] = status
         with open(_exec_path(entry_execution_id), 'w') as f:
             json.dump(target, f, ensure_ascii=False, indent=2, default=str)
         return entry_execution_id
 
     segments = ex.setdefault('exit_segments', [])
-    segments.append({'price': exit_price, 'quantity': exit_quantity,
-                     'time': exit_time or _now(), 'reason': map_exit_reason([exit_reason]),
-                     'status': status, 'exit_decision_id': exit_decision_id,
-                     'entry_execution_id': entry_execution_id or ex.get('entry_execution_id', '')})
+    segments.append({
+        'price': exit_price, 'quantity': exit_quantity,
+        'time': exit_time or _now(), 'reason': map_exit_reason([exit_reason]),
+        'status': status, 'exit_decision_id': exit_decision_id,
+        'entry_execution_id': entry_execution_id or ex.get('entry_execution_id', ''),
+        # Phase 7.2: exit_regime
+        'exit_regime': exit_regime or '',
+    })
     ex['exit'] = {'price': exit_price, 'quantity': exit_quantity,
                   'time': exit_time or _now(), 'reason': map_exit_reason([exit_reason]),
-                  'status': status}
+                  'status': status, 'exit_regime': exit_regime or ''}
     ex['position_status'] = status
     if entry_execution_id:
         ex['entry_execution_id'] = entry_execution_id
@@ -266,7 +283,13 @@ def build_outcome_from_execution(execution_id, decision=None):
     entry = ex['actual'].get('price', 0)
     # Phase 7.1: 直接从 execution 提取 evaluation metadata（record_simulation_execution 已写入）
     entry_regime = ex.get('entry_regime', '')
-    exit_regime = ''  # Phase 7.1: 从 exit decision/execution 提取（待实现）
+    # Phase 7.2: 从 exit_segments 提取 exit_regime
+    exit_regime = ''
+    exit_segments = ex.get('exit_segments', [])
+    if exit_segments:
+        exit_regime = exit_segments[0].get('exit_regime', '')
+    else:
+        exit_regime = ex.get('exit', {}).get('exit_regime', '')
     candidate_score = float(ex.get('candidate_score', 0) or 0)
     candidate_rank = int(ex.get('candidate_rank', 0) or 0)
     candidate_reason_codes = list(ex.get('candidate_reason_codes', []) or [])
@@ -283,7 +306,9 @@ def build_outcome_from_execution(execution_id, decision=None):
     slippage_price = 0.0
     slippage_quantity = 0.0
     execution_delay_seconds = 0
-
+    # Phase 7.2: entry_time / exit_time（用于 holding_period 和 MAE/MFE）
+    entry_time = ex.get('execution_time', '') or ex.get('created_at', '')
+    exit_time = (ex.get('exit') or {}).get('time', '')
     # 如果 execution 为空，尝试从 decision snapshot 读取（Phase 7.1 兼容）
     if not entry_regime or not candidate_score:
         decision_snap = None
@@ -336,6 +361,21 @@ def build_outcome_from_execution(execution_id, decision=None):
         except Exception:
             holding_days = 0
 
+    # Phase 7.2: MAE/MFE from actual entry→exit K-line excursion
+    mae_mfe_status = UNKNOWN
+    mae = 0.0
+    mfe = 0.0
+    if actual_price and entry_time and exit_time:
+        _mm = _compute_mae_mfe_from_klines(ex.get('symbol', ''), actual_price, entry_time, exit_time)
+        if _mm is not None:
+            mae = _mm.get('mae', 0.0)
+            mfe = _mm.get('mfe', 0.0)
+            mae_mfe_status = 'COMPUTED'
+        else:
+            mae = 'UNKNOWN'
+            mfe = 'UNKNOWN'
+            mae_mfe_status = UNKNOWN
+
     # Phase 6.8：基于完整 position lifecycle 聚合数量/成本
     if pos and pos.get('total_entry_quantity'):
         total_entry_qty = pos['total_entry_quantity']
@@ -374,13 +414,27 @@ def build_outcome_from_execution(execution_id, decision=None):
 
     # Phase 7.1: Determine execution source and data quality
     exec_source = ex.get('source', '')
-    data_quality = 'VALID'
-    if exec_source == 'SIMULATION' or any(x in (ex.get('decision_id', '') or '') for x in ['p67', 'p68', 'p7_', 'test_']):
-        data_quality = 'TEST'
-    elif exec_source == 'SIMULATION':
-        data_quality = 'SIMULATION'
-    elif exec_source == 'MANUAL_CONFIRMATION':
+    run_mode = (ex.get('run_mode') or '').upper()
+    environment = (ex.get('environment') or '').upper()
+    decision_id = (ex.get('decision_id') or '').lower()
+    strategy = (ex.get('strategy') or '').lower()
+
+    # Phase 7.2: Source Classification（优先 run_mode/environment）
+    if run_mode == 'PRODUCTION' or environment == 'PRODUCTION':
         data_quality = 'PRODUCTION'
+    elif run_mode == 'TEST' or environment == 'TEST' or any(decision_id.startswith(p) for p in ['p67', 'p68', 'test_']):
+        data_quality = 'TEST'
+    elif run_mode == 'SIMULATION' or exec_source == 'SIMULATION':
+        data_quality = 'SIMULATION'
+    elif run_mode == 'SHADOW' or strategy == 'main_up':
+        data_quality = 'SHADOW'
+    elif run_mode == 'LEGACY' or decision_id.startswith('lc_') or not decision_id:
+        data_quality = 'LEGACY'
+    elif exec_source == 'MANUAL_CONFIRMATION':
+        # MANUAL_CONFIRMATION 不能单独决定 Production；environment 未明确时降级
+        data_quality = 'UNKNOWN'
+    else:
+        data_quality = 'UNKNOWN'
 
     o = Outcome(
         outcome_id=gen_outcome_id(),
@@ -426,6 +480,10 @@ def build_outcome_from_execution(execution_id, decision=None):
         slippage_price=slippage_price,
         slippage_quantity=slippage_quantity,
         execution_delay_seconds=execution_delay_seconds,
+        # Phase 7.2: MAE/MFE from K-line excursion
+        mae=mae,
+        mfe=mfe,
+        mae_mfe_status=mae_mfe_status,
     )
     return o
 
@@ -504,6 +562,56 @@ def _normalize_action(a: str) -> str:
 
 def _exec_action_set() -> set[str]:
     return {_normalize_action(x) for x in ('BUY', 'ADD', 'REDUCE')}
+
+
+def _compute_mae_mfe_from_klines(symbol, actual_entry_price, entry_time, exit_time):
+    """从 K 线计算 MAE/MFE（Phase 7.2）。
+    MAE：持仓期间从 actual_entry_price 到最低价的最大不利波动。
+    MFE：持仓期间从 actual_entry_price 到最高价的最大有利波动。
+    数据不足 → 返回 None（不填充 0）。"""
+    if not actual_entry_price or not entry_time or not exit_time:
+        return None
+    try:
+        import sqlite3
+        from pathlib import Path
+        db_path = Path(__file__).resolve().parent.parent.parent / 'skills' / 'stock' / 'stock-expert' / 'market_cache.db'
+        if not db_path.exists():
+            return None
+        con = sqlite3.connect(db_path)
+        cur = con.cursor()
+        # 规范化 symbol：去掉 sh/sz 前缀，保留 6 位数字
+        code = symbol
+        if code.startswith('sh') or code.startswith('sz'):
+            code = code[2:]
+        if len(code) != 6 or not code.isdigit():
+            con.close()
+            return None
+        # 查询 entry_time → exit_time 区间 K 线
+        cur.execute(
+            "SELECT date, high, low FROM klines WHERE code=? AND date>=? AND date<=? ORDER BY date ASC",
+            (code, entry_time[:10], exit_time[:10])
+        )
+        rows = cur.fetchall()
+        con.close()
+        if not rows:
+            return None
+        mae = 0.0
+        mfe = 0.0
+        for row in rows:
+            high = row[1]
+            low = row[2]
+            if high is None or low is None:
+                continue
+            # 从 entry 价计算
+            adverse = actual_entry_price - low
+            favorable = high - actual_entry_price
+            if adverse > mae:
+                mae = adverse
+            if favorable > mfe:
+                mfe = favorable
+        return {'mae': round(mae, 4), 'mfe': round(mfe, 4)}
+    except Exception:
+        return None
 
 
 def find_entry_execution(symbol, status=EXECUTED, action='BUY'):
@@ -617,11 +725,12 @@ def gen_position_id(symbol: str, created_at: str, suffix: str = '') -> str:
 
 def record_sim_exit_and_outcome(symbol, exit_price, exit_quantity, exit_reason, exit_time='',
                                 decision_id='', entry_execution_id='', position_id='',
-                                exit_decision_id=''):
+                                exit_decision_id='', exit_regime=''):
     """Simulation Exit → Execution + Outcome Closure。
     Phase 6.7 精确关联优先级：
     1) entry_execution_id → 2) decision_id + symbol → 3) position_id → 4) Legacy fallback。
-    Legacy（无结构化信息）→ 返回 None 且标记 LINKAGE_FALLBACK，不伪造。"""
+    Legacy（无结构化信息）→ 返回 None 且标记 LINKAGE_FALLBACK，不伪造。
+    Phase 7.2：增加 exit_regime（来自 Exit Decision 当时的 Regime Snapshot）。"""
     from . import outcome_store as os_
     entry = None
     linkage = ''
@@ -644,7 +753,7 @@ def record_sim_exit_and_outcome(symbol, exit_price, exit_quantity, exit_reason, 
     eid = entry['execution_id']
     pid = entry.get('position_id', position_id)
     record_exit(eid, exit_price, exit_quantity, exit_time, exit_reason,
-                entry_execution_id=eid, exit_decision_id=exit_decision_id)
+                entry_execution_id=eid, exit_decision_id=exit_decision_id, exit_regime=exit_regime)
     e = get_execution(eid)
     if e and linkage:
         e['linkage'] = linkage

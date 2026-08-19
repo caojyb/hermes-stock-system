@@ -28,13 +28,16 @@ from evaluation.run_evaluation import (
     group_by,
     evaluate_trading_permission,
     time_stability,
+    is_production_qualified,
+    check_evaluation_health,
     _classify_source,
     _to_float,
 )
 
 
-def _make_execution(decision_id='p7_d1', symbol='600030', action='BUY', strategy='v1_double',
-                    status='EXECUTED', source='SIMULATION', position_id='', position_status='CLOSED'):
+def _make_execution(decision_id='eval_d1', symbol='600030', action='BUY', strategy='v1_double',
+                    status='EXECUTED', source='SIMULATION', position_id='', position_status='CLOSED',
+                    run_mode='', environment=''):
     return {
         'execution_id': f"exec_{decision_id}",
         'decision_id': decision_id,
@@ -52,13 +55,17 @@ def _make_execution(decision_id='p7_d1', symbol='600030', action='BUY', strategy
         'exit_segments': [],
         'exit_summary': {},
         'linkage': '',
+        'run_mode': run_mode,
+        'environment': environment,
     }
 
 
-def _make_outcome(decision_id='p7_d1', symbol='600030', strategy='v1_double', source='DECISION',
+def _make_outcome(decision_id='eval_d1', symbol='600030', strategy='v1_double', source='DECISION',
                   return_pct=0.1, realized_pnl=1000.0, exit_reason='TAKE_PROFIT',
                   position_id='', entry_regime='strong_trend', exit_regime='strong_trend',
-                  mae=-0.02, mfe=0.05, max_drawdown=-0.01, holding_period_days=5):
+                  mae=-0.02, mfe=0.05, max_drawdown=-0.01, holding_period_days=5,
+                  permission_status='ALLOW', portfolio_assessment=None, exit_regime_actual=''):
+    portfolio_assessment = portfolio_assessment or {}
     return {
         'outcome_id': f"out_{decision_id}",
         'decision_id': decision_id,
@@ -75,8 +82,11 @@ def _make_outcome(decision_id='p7_d1', symbol='600030', strategy='v1_double', so
         'mfe': mfe,
         'max_drawdown': max_drawdown,
         'entry_regime': entry_regime,
-        'exit_regime': exit_regime,
+        'exit_regime': exit_regime_actual or exit_regime,
+        'permission_status': permission_status,
+        'portfolio_assessment': portfolio_assessment,
         'position_id': position_id or f"P_{decision_id}",
+        'execution_id': f"exec_{decision_id}",
         'actual': {
             'entry_price': 10.0,
             'exit_price': 11.0,
@@ -104,9 +114,9 @@ def _make_outcome(decision_id='p7_d1', symbol='600030', strategy='v1_double', so
 class TestDatasetSeparation:
     def test_production_shadow_legacy_separated(self):
         execs = [
-            _make_execution('eval_p1', strategy='v1_double', source='SIMULATION'),
-            _make_execution('eval_s1', strategy='main_up', source='SIMULATION'),
-            _make_execution('', symbol='600099', action='BUY', strategy='v1_double', status='EXECUTED', source='SIMULATION'),
+            _make_execution('eval_p1', strategy='v1_double', source='SIMULATION', run_mode='SIMULATION'),
+            _make_execution('eval_s1', strategy='main_up', source='SIMULATION', run_mode='SIMULATION'),
+            _make_execution('', symbol='600099', action='BUY', strategy='v1_double', status='EXECUTED', source='SIMULATION', run_mode='LEGACY'),
         ]
         outcomes = [
             _make_outcome('eval_p1', strategy='v1_double', source='DECISION'),
@@ -114,10 +124,9 @@ class TestDatasetSeparation:
             _make_outcome('', symbol='600099', source='LEGACY'),
         ]
         dataset = build_dataset()
-        # Phase 7.1: classification based on source + decision_id pattern
-        assert _classify_source(execs[0]) == 'SIMULATION'  # SIMULATION source, no test prefix
-        assert _classify_source(execs[1]) == 'SHADOW'      # main_up strategy
-        assert _classify_source(execs[2]) == 'LEGACY'      # no decision_id
+        assert _classify_source(execs[0]) == 'SIMULATION'
+        assert _classify_source(execs[1]) == 'SHADOW'
+        assert _classify_source(execs[2]) == 'LEGACY'
 
 
 class TestStats:
@@ -165,9 +174,9 @@ class TestLayerStats:
 class TestPermissionCounterfactual:
     def test_allowed_vs_blocked(self):
         execs = [
-            _make_execution('perm_a1', status='EXECUTED', position_id='pid_a', source='MANUAL_CONFIRMATION'),
-            _make_execution('perm_a2', status='EXECUTED', position_id='pid_b', source='MANUAL_CONFIRMATION'),
-            _make_execution('perm_b1', status='BLOCKED', position_id='pid_c', source='MANUAL_CONFIRMATION'),
+            _make_execution('perm_a1', status='EXECUTED', position_id='pid_a', source='MANUAL_CONFIRMATION', run_mode='PRODUCTION'),
+            _make_execution('perm_a2', status='EXECUTED', position_id='pid_b', source='MANUAL_CONFIRMATION', run_mode='PRODUCTION'),
+            _make_execution('perm_b1', status='BLOCKED', position_id='pid_c', source='MANUAL_CONFIRMATION', run_mode='PRODUCTION'),
         ]
         outcomes = [
             _make_outcome('perm_a1', position_id='pid_a', return_pct=0.1),
@@ -194,3 +203,143 @@ class TestTimeStability:
         ts = time_stability(recs)
         assert '2026' in ts['yearly']
         assert '2026-Q3' in ts['quarterly']
+
+
+class TestSourceClassification:
+    def test_manual_confirmation_alone_not_production(self):
+        e = _make_execution('src_m1', source='MANUAL_CONFIRMATION')
+        assert _classify_source(e) != 'PRODUCTION'
+
+    def test_production_needs_environment(self):
+        e = _make_execution('src_p1', source='MANUAL_CONFIRMATION')
+        e['environment'] = 'PRODUCTION'
+        assert _classify_source(e) == 'PRODUCTION'
+
+    def test_shadow_by_strategy(self):
+        e = _make_execution('src_s1', strategy='main_up', source='SIMULATION')
+        assert _classify_source(e) == 'SHADOW'
+
+    def test_legacy_by_decision_id(self):
+        e = _make_execution('lc_legacy', source='SIMULATION')
+        assert _classify_source(e) == 'LEGACY'
+
+    def test_test_by_decision_id_prefix(self):
+        e = _make_execution('p67_d1', source='SIMULATION')
+        assert _classify_source(e) == 'TEST'
+
+
+class TestProductionQualification:
+    def test_full_production_qualified(self):
+        rec = _make_outcome('pq_full', entry_regime='strong_trend', permission_status='ALLOW',
+                            exit_reason='TAKE_PROFIT', exit_regime='sideways')
+        rec['source'] = 'PRODUCTION'
+        rec['decision_id'] = 'prod_d1'
+        rec['execution_id'] = 'exec_prod_d1'
+        rec['position_id'] = 'P_prod_d1'
+        rec['portfolio_assessment'] = {'drawdown': 0.1}
+        q = is_production_qualified(rec)
+        assert q['qualified'] is True
+        assert q['status'] == 'QUALIFIED'
+
+    def test_missing_regime_data_gap(self):
+        rec = _make_outcome('pq_gap', permission_status='ALLOW', exit_reason='TAKE_PROFIT')
+        rec['source'] = 'PRODUCTION'
+        rec['decision_id'] = 'prod_d2'
+        rec['execution_id'] = 'exec_prod_d2'
+        rec['position_id'] = 'P_prod_d2'
+        rec['portfolio_assessment'] = {}
+        rec['entry_regime'] = ''
+        q = is_production_qualified(rec)
+        assert q['status'] == 'DATA_GAP'
+        assert 'entry_regime' in q['missing']
+
+    def test_missing_permission_data_gap(self):
+        rec = _make_outcome('pq_gap2', entry_regime='strong_trend', exit_reason='TAKE_PROFIT')
+        rec['source'] = 'PRODUCTION'
+        rec['decision_id'] = 'prod_d3'
+        rec['execution_id'] = 'exec_prod_d3'
+        rec['position_id'] = 'P_prod_d3'
+        rec['portfolio_assessment'] = {}
+        rec['permission_status'] = ''
+        q = is_production_qualified(rec)
+        assert q['status'] == 'DATA_GAP'
+        assert 'permission_status' in q['missing']
+
+    def test_missing_exit_regime_partial(self):
+        rec = _make_outcome('pq_partial', entry_regime='strong_trend', permission_status='ALLOW',
+                            exit_reason='TAKE_PROFIT')
+        rec['source'] = 'PRODUCTION'
+        rec['decision_id'] = 'prod_d4'
+        rec['execution_id'] = 'exec_prod_d4'
+        rec['position_id'] = 'P_prod_d4'
+        rec['portfolio_assessment'] = {'exposure': 0.5}
+        rec['exit_regime'] = ''
+        q = is_production_qualified(rec)
+        assert q['status'] == 'PRODUCTION_PARTIAL'
+        assert 'exit_regime' in q['missing']
+
+    def test_non_production_never_qualified(self):
+        rec = _make_outcome('pq_testsrc')
+        rec['source'] = 'TEST'
+        q = is_production_qualified(rec)
+        assert q['qualified'] is False
+        assert 'source!=PRODUCTION' in q['missing']
+
+
+class TestEvaluationHealth:
+    def test_not_ready_without_production(self):
+        health = check_evaluation_health()
+        assert health['evaluation_health']['status'] == 'NOT_READY'
+        assert health['evaluation_health']['production']['total'] == 0
+
+    def test_health_counts(self):
+        health = check_evaluation_health()
+        prod = health['evaluation_health']['production']
+        assert 'valid' in prod
+        assert 'partial' in prod
+        assert 'data_gap' in prod
+        assert 'missing_regime' in prod
+        assert 'missing_score' in prod
+        assert 'missing_permission' in prod
+        assert 'missing_portfolio' in prod
+        assert 'missing_mae' in prod
+        assert 'missing_mfe' in prod
+
+
+class TestExitRegimeProvenance:
+    def test_exit_regime_propagates_to_outcome(self):
+        from decision.execution import record_exit, build_outcome_from_execution, record_simulation_execution
+        did = 'p72_exit_regime'
+        eid = record_simulation_execution({'decision_id': did, 'symbol': '600011', 'name': 'T',
+                                           'strategy': 'v1_double', 'reference_price': 10.0,
+                                           'market_regime': 'sideways'}, 'BUY', 10.0, 1000)
+        record_exit(eid, 12.0, 1000, '2026-08-19', 'TAKE_PROFIT', exit_regime='high_volatility')
+        o = build_outcome_from_execution(eid)
+        assert o is not None
+        assert o.exit_regime == 'high_volatility'
+
+
+class TestHoldingPeriod:
+    def test_holding_period_uses_actual_execution_time(self):
+        from decision.execution import record_exit, build_outcome_from_execution, record_simulation_execution
+        did = 'p72_hold'
+        eid = record_simulation_execution({'decision_id': did, 'symbol': '600012', 'name': 'T',
+                                           'strategy': 'v1_double', 'reference_price': 10.0,
+                                           'timestamp': '2026-08-18T10:00:00+00:00'}, 'BUY', 10.0, 1000)
+        record_exit(eid, 11.0, 1000, '2026-08-19', 'TAKE_PROFIT')
+        o = build_outcome_from_execution(eid)
+        assert o is not None
+        assert o.holding_period_days >= 0
+
+
+class TestSlippageCapture:
+    def test_slippage_from_planned_actual(self):
+        from decision.execution import record_simulation_execution, record_exit, build_outcome_from_execution
+        did = 'p72_slip'
+        eid = record_simulation_execution({'decision_id': did, 'symbol': '600013', 'name': 'T',
+                                           'strategy': 'v1_double', 'reference_price': 10.0}, 'BUY', 10.2, 1000)
+        record_exit(eid, 11.0, 1000, '2026-08-19', 'TAKE_PROFIT', status='CLOSED')
+        o = build_outcome_from_execution(eid)
+        assert o is not None
+        assert o.actual.entry_price == 10.2
+        assert o.slippage_price == 0.2

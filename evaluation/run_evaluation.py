@@ -43,28 +43,34 @@ def _classify_source(exec_obj: dict) -> str:
     src = (exec_obj.get('source') or '').upper()
     strategy = (exec_obj.get('strategy') or '').lower()
     decision_id = (exec_obj.get('decision_id') or '').lower()
-    
+    run_mode = (exec_obj.get('run_mode') or '').upper()
+    environment = (exec_obj.get('environment') or '').upper()
+
     # Strategy 判断
     if strategy == 'main_up':
         return 'SHADOW'
-    
-    # Source 判断
-    if src == 'MANUAL_CONFIRMATION':
+
+    # Phase 7.2: 优先使用 run_mode / environment
+    if run_mode == 'PRODUCTION' or environment == 'PRODUCTION':
         return 'PRODUCTION'
-    
-    # decision_id 模式判断（测试数据有特征前缀）
-    if not decision_id or decision_id.startswith('lc_') or decision_id == 'legacy':
+    if run_mode == 'TEST' or environment == 'TEST':
+        return 'TEST'
+    if run_mode == 'SIMULATION':
+        return 'SIMULATION'
+    if run_mode == 'SHADOW':
+        return 'SHADOW'
+    if run_mode == 'LEGACY' or decision_id.startswith('lc_') or not decision_id:
         return 'LEGACY'
-    
-    # 测试标识：p67/p68/test_ 前缀（Phase 6.7/6.8/7 测试）
+
+    # decision_id 模式判断（测试数据有特征前缀）
     if any(decision_id.startswith(prefix) for prefix in ['p67', 'p68', 'test_']):
         return 'TEST'
-    
-    # 其他 SIMULATION 且无测试标识
-    if src == 'SIMULATION':
-        return 'SIMULATION'
-    
-    return 'PRODUCTION'
+
+    # MANUAL_CONFIRMATION 不能单独决定 Production；environment 未明确时降级
+    if src == 'MANUAL_CONFIRMATION':
+        return 'UNKNOWN'
+
+    return 'UNKNOWN'
 
 
 def _normalize_action(action: str) -> str:
@@ -151,11 +157,11 @@ def build_dataset():
             'return_pct': _to_float((o.get('actual') or {}).get('return_pct')),
             'realized_pnl': _to_float((o.get('actual') or {}).get('realized_pnl')),
             'holding_period_days': _to_float(o.get('holding_period_days')),
-            'mae': _to_float((o.get('excursion') or {}).get('mae')),
-            'mfe': _to_float((o.get('excursion') or {}).get('mfe')),
+            'mae': _to_float(o.get('mae') or (o.get('excursion') or {}).get('mae')),
+            'mfe': _to_float(o.get('mfe') or (o.get('excursion') or {}).get('mfe')),
             'max_drawdown': _to_float((o.get('excursion') or {}).get('max_drawdown')),
-            'entry_regime': o.get('entry_regime', ''),
-            'exit_regime': o.get('exit_regime', ''),
+            'entry_regime': o.get('entry_regime', '') or (entry_exec or {}).get('entry_regime', ''),
+            'exit_regime': o.get('exit_regime', '') or (entry_exec or {}).get('exit', {}).get('exit_regime', ''),
             'candidate_score': _to_float((o.get('candidate_score') or (entry_exec or {}).get('candidate_score') or 0)),
             'candidate_rank': int(o.get('candidate_rank') or (entry_exec or {}).get('candidate_rank') or 0),
             'permission_status': o.get('permission_status', '') or (entry_exec or {}).get('permission_status', ''),
@@ -269,6 +275,137 @@ def evaluate_trading_permission(execs: list[dict], outcomes: list[dict]) -> dict
         'blocked_stats': compute_stats(blocked_outs),
     }
     return result
+
+
+def is_production_qualified(rec: dict) -> dict:
+    """Phase 7.2: Production Data Gate。
+    只有满足核心字段才进入 Production Evaluation Dataset；否则 DATA_GAP / PARTIAL。"""
+    result = {
+        'qualified': False,
+        'status': 'DATA_GAP',
+        'missing': [],
+    }
+    # source 必须明确为 PRODUCTION
+    if rec.get('source') != 'PRODUCTION':
+        result['missing'].append('source!=PRODUCTION')
+        return result
+    # 核心字段检查
+    checks = [
+        ('decision_id', rec.get('decision_id')),
+        ('execution_id', rec.get('execution_id')),
+        ('position_id', rec.get('position_id')),
+        ('entry_regime', rec.get('entry_regime')),
+        ('permission_status', rec.get('permission_status')),
+        ('portfolio_assessment', rec.get('portfolio_assessment') if rec.get('portfolio_assessment') is not None else None),
+        ('actual_entry_price', rec.get('entry_price') or (rec.get('actual') or {}).get('entry_price')),
+        ('exit_reason', rec.get('exit_reason')),
+    ]
+    for name, value in checks:
+        if value is None or value == '':
+            result['missing'].append(name)
+    if result['missing']:
+        result['status'] = 'DATA_GAP'
+        return result
+    # 非核心字段缺失 → PARTIAL
+    non_core = []
+    if not rec.get('exit_regime'):
+        non_core.append('exit_regime')
+    if rec.get('mae') in (0.0, 'UNKNOWN') or rec.get('mfe') in (0.0, 'UNKNOWN'):
+        non_core.append('mae_mfe')
+    if non_core:
+        result['status'] = 'PRODUCTION_PARTIAL'
+        result['missing'] = non_core
+    else:
+        result['status'] = 'QUALIFIED'
+        result['qualified'] = True
+    return result
+
+
+def check_evaluation_health() -> dict:
+    """Phase 7.2: Evaluation Health Checker。"""
+    dataset = build_dataset()
+    prod = dataset.get('production', [])
+    shadow = dataset.get('shadow', [])
+    legacy = dataset.get('legacy', [])
+    test = dataset.get('test', [])
+    simulation = dataset.get('simulation', [])
+
+    prod_total = len(prod)
+    valid = 0
+    partial = 0
+    data_gap = 0
+    missing_regime = 0
+    missing_score = 0
+    missing_permission = 0
+    missing_portfolio = 0
+    missing_execution = 0
+    missing_exit = 0
+    missing_outcome = 0
+    missing_mae = 0
+    missing_mfe = 0
+    missing_slippage = 0
+
+    for rec in prod:
+        q = is_production_qualified(rec)
+        if q['qualified']:
+            valid += 1
+        elif q['status'] == 'PRODUCTION_PARTIAL':
+            partial += 1
+        else:
+            data_gap += 1
+        if not rec.get('entry_regime'):
+            missing_regime += 1
+        if not rec.get('candidate_score'):
+            missing_score += 1
+        if not rec.get('permission_status'):
+            missing_permission += 1
+        if not rec.get('portfolio_assessment'):
+            missing_portfolio += 1
+        if not rec.get('execution_id'):
+            missing_execution += 1
+        if not rec.get('exit_reason'):
+            missing_exit += 1
+        if not rec.get('outcome_id'):
+            missing_outcome += 1
+        if rec.get('mae') in (0.0, 'UNKNOWN') or not rec.get('mae'):
+            missing_mae += 1
+        if rec.get('mfe') in (0.0, 'UNKNOWN') or not rec.get('mfe'):
+            missing_mfe += 1
+        if not rec.get('slippage_price') and rec.get('slippage_price') != 0.0:
+            missing_slippage += 1
+
+    if prod_total == 0:
+        status = 'NOT_READY'
+    elif valid > 0 and data_gap == 0:
+        status = 'READY'
+    else:
+        status = 'DEGRADED'
+
+    return {
+        'evaluation_health': {
+            'production': {
+                'total': prod_total,
+                'valid': valid,
+                'partial': partial,
+                'data_gap': data_gap,
+                'missing_regime': missing_regime,
+                'missing_score': missing_score,
+                'missing_permission': missing_permission,
+                'missing_portfolio': missing_portfolio,
+                'missing_execution': missing_execution,
+                'missing_exit': missing_exit,
+                'missing_outcome': missing_outcome,
+                'missing_mae': missing_mae,
+                'missing_mfe': missing_mfe,
+                'missing_slippage': missing_slippage,
+            },
+            'shadow': {'total': len(shadow)},
+            'legacy': {'total': len(legacy)},
+            'test': {'total': len(test)},
+            'simulation': {'total': len(simulation)},
+            'status': status,
+        }
+    }
 
 
 def time_stability(records: list[dict]) -> dict:
