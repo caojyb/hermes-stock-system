@@ -72,6 +72,14 @@ class Actual:
     exit_price: float = 0.0
     realized_pnl: float = 0.0
     return_pct: float = 0.0
+    # Phase 6.8：Position Quantity / Cost Basis Integrity
+    initial_quantity: float = 0.0
+    added_quantity: float = 0.0
+    total_entry_quantity: float = 0.0
+    average_entry_price: float = 0.0
+    total_exit_quantity: float = 0.0
+    weighted_exit_price: float = 0.0
+    final_quantity: float = 0.0
 
 
 @dataclass

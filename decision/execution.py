@@ -234,23 +234,44 @@ def build_outcome_from_execution(execution_id, decision=None):
         return None
     if not ex.get('actual', {}).get('price'):
         return None
+    # Phase 6.8：基于完整 position lifecycle 聚合数量/成本
+    pid = ex.get('position_id', '')
+    pos = aggregate_position(pid) if pid else None
     entry = ex['actual'].get('price', 0)
-    # 多段退出 → 加权退出价 + 总数量
-    summary = ex.get('exit_summary')
-    if summary and summary.get('total_quantity'):
-        exit_price = summary['weighted_avg_price']
-        qty = summary['total_quantity']
-        # 已退出数量应 <= 入场数量；若缺失入场数量用退出总量
-        entry_qty = ex['actual'].get('quantity', 0)
-        eff_qty = qty if not entry_qty else min(qty, entry_qty)
+    if pos and pos.get('total_entry_quantity'):
+        total_entry_qty = pos['total_entry_quantity']
+        avg_cost = pos['average_entry_price']
+        total_exit_qty = pos['total_exit_quantity']
+        weighted_exit = pos['weighted_exit_price']
+        eff_qty = total_exit_qty
+        exit_price = weighted_exit
+        if weighted_exit and avg_cost:
+            ret = (weighted_exit - avg_cost) / avg_cost
+            realized = (weighted_exit - avg_cost) * total_exit_qty
+        else:
+            ret = (exit_price - entry) / entry if entry else 0
+            realized = (exit_price - entry) * eff_qty
     else:
-        exit_price = ex.get('exit', {}).get('price', 0)
-        qty = ex['actual'].get('quantity', 0)
-        eff_qty = qty
+        summary = ex.get('exit_summary')
+        if summary and summary.get('total_quantity'):
+            exit_price = summary['weighted_avg_price']
+            qty = summary['total_quantity']
+            entry_qty = ex['actual'].get('quantity', 0)
+            eff_qty = qty if not entry_qty else min(qty, entry_qty)
+        else:
+            exit_price = ex.get('exit', {}).get('price', 0)
+            qty = ex['actual'].get('quantity', 0)
+            eff_qty = qty
+        total_entry_qty = entry_qty if 'entry_qty' in dir() else ex['actual'].get('quantity', 0)
+        total_exit_qty = eff_qty
+        if not exit_price:
+            return None
+        ret = (exit_price - entry) / entry if entry else 0
+        realized = (exit_price - entry) * eff_qty
+        avg_cost = entry
+        weighted_exit = exit_price
     if not exit_price:
         return None
-    ret = (exit_price - entry) / entry if entry else 0
-    realized = (exit_price - entry) * eff_qty
     o = Outcome(
         outcome_id=gen_outcome_id(),
         decision_id=ex.get('decision_id', ''),
@@ -262,16 +283,73 @@ def build_outcome_from_execution(execution_id, decision=None):
         exit_time=ex.get('exit', {}).get('time', ''),
         planned=Planned(entry_price=ex.get('planned', {}).get('price', 0),
                         target_position=ex.get('planned', {}).get('position', 0)),
-        actual=Actual(entry_price=entry, position_size=eff_qty, exit_price=round(exit_price, 4),
-                      realized_pnl=round(realized, 4), return_pct=round(ret, 4)),
+        actual=Actual(entry_price=entry, position_size=total_entry_qty,
+                      exit_price=round(exit_price, 4),
+                      realized_pnl=round(realized, 4), return_pct=round(ret, 4),
+                      initial_quantity=pos.get('initial_quantity', total_entry_qty) if pos else total_entry_qty,
+                      added_quantity=pos.get('added_quantity', 0.0) if pos else 0.0,
+                      total_entry_quantity=total_entry_qty,
+                      average_entry_price=round(avg_cost, 4) if avg_cost else 0.0,
+                      total_exit_quantity=total_exit_qty,
+                      weighted_exit_price=round(weighted_exit, 4) if weighted_exit else 0.0,
+                      final_quantity=total_entry_qty - total_exit_qty),
         lifecycle_status=CLOSED,
         exit_reason=ex.get('exit', {}).get('reason', UNKNOWN),
         portfolio_snapshot_id=ex.get('portfolio_snapshot_id', ''),
         decision_snapshot_id=ex.get('decision_snapshot_id', ''),
-        code_version='p67',
-        position_id=ex.get('position_id', ''),
+        code_version='p68',
+        position_id=pid,
     )
     return o
+
+
+def aggregate_position(position_id):
+    """按 position_id 聚合 Entry/ADD/Exit 数量与成本。"""
+    if not position_id:
+        return None
+    all_execs = find_executions_by_position_id(position_id)
+    if not all_execs:
+        return None
+    initial_qty = 0
+    add_qty = 0
+    initial_cost = 0.0
+    add_cost = 0.0
+    total_exit_qty = 0
+    total_exit_proceeds = 0.0
+    for e in all_execs:
+        if not e.get('actual', {}).get('price'):
+            continue
+        price = float(e['actual'].get('price', 0) or 0)
+        qty = float(e['actual'].get('quantity', 0) or 0)
+        if e.get('status') == EXECUTED and _normalize_action(e.get('action', '')) in _exec_action_set():
+            if e.get('action', '').upper() == 'ADD':
+                add_qty += qty
+                add_cost += price * qty
+            else:
+                initial_qty += qty
+                initial_cost += price * qty
+        for seg in e.get('exit_segments', []):
+            eq = float(seg.get('quantity', 0) or 0)
+            ep = float(seg.get('price', 0) or 0)
+            if eq:
+                total_exit_qty += eq
+                total_exit_proceeds += ep * eq
+    total_entry = initial_qty + add_qty
+    total_cost = initial_cost + add_cost
+    avg_cost = total_cost / total_entry if total_entry else 0.0
+    wavg_exit = total_exit_proceeds / total_exit_qty if total_exit_qty else 0.0
+    return {
+        'position_id': position_id,
+        'initial_quantity': initial_qty,
+        'added_quantity': add_qty,
+        'total_entry_quantity': total_entry,
+        'average_entry_price': round(avg_cost, 4),
+        'total_exit_quantity': total_exit_qty,
+        'weighted_exit_price': round(wavg_exit, 4),
+        'current_quantity': total_entry - total_exit_qty,
+        'invested_capital': round(total_cost, 4),
+        'realized_pnl': round(total_exit_proceeds - total_cost, 4),
+    }
 
 
 def find_unlinked_decisions(recent_days=None):
@@ -368,7 +446,8 @@ def find_executions_by_position_id(position_id):
 
 
 def find_exit_executions(entry_execution_id):
-    """按 entry_execution_id 找该笔生命周期内全部 Exit Execution。"""
+    """按 entry_execution_id 找该笔生命周期内全部 Exit Execution。
+    当前退出段存储在 entry execution 文件内；未来独立 exit file 时可去掉自身。"""
     if not entry_execution_id:
         return []
     out = []
@@ -474,17 +553,23 @@ def lifecycle_replay(outcome_id):
     if position_id:
         all_execs = find_executions_by_position_id(position_id)
         entry_exec = next((e for e in all_execs if _normalize_action(e.get('action', '')) in _exec_action_set()), None)
-        exit_executions = [e for e in all_execs if e.get('entry_execution_id') == (entry_exec or {}).get('execution_id')]
+        eid0 = (entry_exec or {}).get('execution_id', '')
+        exit_executions = [e for e in all_execs if e.get('entry_execution_id') == eid0 and e.get('execution_id') != eid0]
     # 2) 退而求其次 decision_id
     if not entry_exec and did:
         exs = find_execution(did)
         entry_exec = next((e for e in exs if _normalize_action(e.get('action', '')) in _exec_action_set()), None)
-        exit_executions = [e for e in exs if e.get('entry_execution_id') == (entry_exec or {}).get('execution_id')]
+        eid0 = (entry_exec or {}).get('execution_id', '')
+        exit_executions = [e for e in exs if e.get('entry_execution_id') == eid0 and e.get('execution_id') != eid0]
     # 3) symbol fallback（兼容历史/Legacy Outcome）
     if not entry_exec:
         entry_exec = _find_any_execution(outcome.get('symbol', ''), action='BUY', status=EXECUTED)
         if entry_exec:
             exit_executions = find_exit_executions(entry_exec.get('execution_id', ''))
+    # 当前退出段存储在 entry execution 的 exit_segments 中；若未分离出独立 exit file，
+    # 则将 entry execution 作为 exit_executions 的代表，保证 replay 可展示。
+    if not exit_executions and entry_exec and entry_exec.get('exit_segments'):
+        exit_executions = [entry_exec]
     if did:
         dp = Path(__file__).resolve().parent / 'snapshots' / f"{did}.json"
         if dp.exists():
@@ -521,10 +606,9 @@ def monitor(recent_days=None):
     }
     current_unlinked = 0
     historical_unlinked = 0
-    # 区分：有对应 entry execution 的 decision 是"当前"，无的是 legacy
-    # 简化：所有无 execution 的 decision 计入 historical（Phase 6.5 前 legacy）——
-    # 生产窗口内新 decision 才会有 entry execution。此处 current_unlinked 用
-    # "该 decision 有 entry execution 但无 exit/outcome" 近似，历史全 legacy。
+    linkage_fallback_count = 0
+    production_linkage = 0
+    shadow_count = 0
 
     # 检查 BUY decision 无 execution（entry BUY decision）
     buy_decisions = 0
@@ -541,7 +625,7 @@ def monitor(recent_days=None):
             if not exs:
                 integrity['buy_decision_no_execution'] += 1
                 historical_unlinked += 1
-    # Execution no position / OPEN 无 entry
+    # Execution linkage 统计
     for f in exes:
         try:
             e = json.load(open(f))
@@ -550,16 +634,15 @@ def monitor(recent_days=None):
         if not e.get('actual', {}).get('price'):
             integrity['execution_no_position'] += 1
         if e.get('position_status') == OPEN and not e.get('exit_segments'):
-            # 正常 OPEN（未退出），非 gap
             pass
-    # CLOSED position 无 outcome：检查 CLOSED executions 是否有对应 outcome
-    outcome_symbols = set()
-    for f in outs:
-        try:
-            o = json.load(open(f))
-            outcome_symbols.add((o.get('symbol'), o.get('exit_time', '')))
-        except Exception:
-            pass
+        link = e.get('linkage', '')
+        if link == LINKAGE_FALLBACK:
+            linkage_fallback_count += 1
+        elif link == 'STRUCTURED':
+            production_linkage += 1
+        if e.get('source') == SRC_SHADOW or e.get('strategy', '').lower() == 'main_up':
+            shadow_count += 1
+    # CLOSED position 无 outcome
     closed_no_outcome = 0
     for f in exes:
         try:
@@ -576,8 +659,6 @@ def monitor(recent_days=None):
     open_positions = sum(1 for f in exes if _json_field(f, 'position_status') == OPEN)
     closed_positions = sum(1 for f in exes if _json_field(f, 'position_status') == CLOSED)
     current_gap = integrity['buy_decision_no_execution']
-    # 健康判定：status 只反映 active pipeline（新 decision 闭环）；历史 legacy
-    # （closed_no_outcome / historical_unlinked）单独作为 known_legacy_gap 输出，不污染当前。
     if current_gap == 0:
         status = 'HEALTHY'
     elif current_gap <= max(1, buy_decisions * 0.3):
@@ -594,6 +675,9 @@ def monitor(recent_days=None):
         'integrity': integrity,
         'known_legacy_gap': historical_unlinked,
         'active_pipeline_gap': current_gap,
+        'linkage_fallback_count': linkage_fallback_count,
+        'production_linkage': production_linkage,
+        'shadow_count': shadow_count,
     }
 
 
