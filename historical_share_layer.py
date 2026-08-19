@@ -188,9 +188,37 @@ class HistoricalShareLayer:
         self._loaded_symbols.add(symbol)
 
     def load_symbols(self, symbols: list[str], **kwargs) -> None:
-        """批量加载。"""
+        """批量加载（从 live CNINFO API）。"""
         for s in symbols:
             self.load_symbol(s, **kwargs)
+
+    def load_symbols_from_fixtures(self, symbols: list[str], fixture_dir: str | Path | None = None) -> None:
+        """从冻结 fixture 加载（测试用，不访问网络）。"""
+        if fixture_dir is None:
+            fixture_dir = Path(__file__).resolve().parent / 'fixtures'
+        else:
+            fixture_dir = Path(fixture_dir)
+        import pandas as pd
+        for sym in symbols:
+            path = fixture_dir / f'cninfo_{sym}.parquet'
+            if not path.exists():
+                print(f'[WARN] Fixture not found: {path}', flush=True)
+                self._events[sym] = []
+                self._loaded_symbols.add(sym)
+                continue
+            df = pd.read_parquet(path)
+            events = convert_raw_events(df, sym)
+            # 去重
+            seen: set[str] = set()
+            deduped: list[HistoricalShareEvent] = []
+            for e in events:
+                if e.source_record_id and e.source_record_id in seen:
+                    continue
+                if e.source_record_id:
+                    seen.add(e.source_record_id)
+                deduped.append(e)
+            self._events[sym] = deduped
+            self._loaded_symbols.add(sym)
 
     def get_events(self, symbol: str) -> list[HistoricalShareEvent]:
         """获取股票的所有股本事件（未排序）。"""

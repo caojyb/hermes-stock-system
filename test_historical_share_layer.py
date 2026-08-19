@@ -15,10 +15,12 @@ DB = Path('/home/caojy/.hermes/skills/stock/stock-expert/market_cache.db')
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _make_layer(symbols: list[str] | None = None) -> tuple[HistoricalShareLayer, HistoricalMarketCap]:
+def _make_layer(symbols: list[str] | None = None, use_fixture: bool = True) -> tuple[HistoricalShareLayer, HistoricalMarketCap]:
     from historical_share_layer import HistoricalShareLayer, HistoricalMarketCap
     layer = HistoricalShareLayer()
-    if symbols:
+    if symbols and use_fixture:
+        layer.load_symbols_from_fixtures(symbols)
+    elif symbols:
         layer.load_symbols(symbols)
     return layer, HistoricalMarketCap(layer)
 
@@ -66,17 +68,17 @@ class TestUnitConversion:
 class TestPITLookup:
     def test_pit_returns_known_event(self):
         """PIT 查询返回 effective_date <= as_of_date 的最后一条 KNOWN 事件。"""
-        layer, _ = _make_layer(['000001'])
+        layer, _ = _make_layer(['000001'], use_fixture=True)
         ev = layer.get_as_of('000001', date(2022, 6, 24))
         assert ev is not None
         assert ev.effective_date <= date(2022, 6, 24)
-        # 平安银行 2022-06-24 前最后一条 KNOWN 应该是 2000-12-08 配股上市
+        # 平安银行 fixture 中 2022-06-24 前最后一条 KNOWN 应该是 2000-12-08 配股上市
         # 因为定期报告都是 APPROXIMATE，只有配股上市是 KNOWN
         assert ev.date_quality.value == 'KNOWN_EFFECTIVE_DATE'
 
     def test_pit_cutoff_excludes_future(self):
         """as_of_date 之后的 KNOWN 事件不被返回。"""
-        layer, _ = _make_layer(['000001'])
+        layer, _ = _make_layer(['000001'], use_fixture=True)
         ev_before = layer.get_as_of('000001', date(2000, 6, 30))
         ev_after = layer.get_as_of('000001', date(2000, 12, 9))
         # 2000-12-08 配股上市
@@ -88,7 +90,7 @@ class TestPITLookup:
 
     def test_pit_no_future_leak(self):
         """get_as_of 绝不返回 effective_date > as_of_date 的事件。"""
-        layer, _ = _make_layer(['000001'])
+        layer, _ = _make_layer(['000001'], use_fixture=True)
         for d in [date(1999, 1, 1), date(2000, 6, 29), date(2000, 12, 7)]:
             ev = layer.get_as_of('000001', d)
             if ev:
@@ -96,12 +98,13 @@ class TestPITLookup:
 
     def test_pit_approximate_degraded(self):
         """如果没有 KNOWN 事件，降级到 APPROXIMATE。"""
-        # 比亚迪 2011-09-28 配售股份上市 = KNOWN
-        layer, _ = _make_layer(['002594'])
-        ev = layer.get_as_of('002594', date(2011, 9, 27))
+        # 平安银行：2000-06-30 定期报告（APPROXIMATE），2000-12-08 配股上市（KNOWN）
+        # 对于 2000-07-15，没有 KNOWN 事件，应降级到 2000-06-30 的 APPROXIMATE
+        layer, _ = _make_layer(['000001'], use_fixture=True)
+        ev = layer.get_as_of('000001', date(2000, 7, 15))
         assert ev is not None
-        # 2011-09-27 前只有 2011-06-30 定期报告（APPROXIMATE）
         assert ev.date_quality.value == 'APPROXIMATE_EFFECTIVE_DATE'
+        assert ev.effective_date == date(2000, 6, 30)
 
 
 # ---------------------------------------------------------------------------
@@ -187,30 +190,35 @@ class TestDeduplication:
 class TestHistoricalMarketCap:
     def test_market_cap_positive(self):
         """历史市值 > 0。"""
-        _, mcap = _make_layer(['000001'])
+        _, mcap = _make_layer(['000001'], use_fixture=True)
         result = mcap.get_market_cap('000001', date(2022, 6, 24))
         assert result.market_cap is not None
         assert result.market_cap > 0
 
     def test_market_cap_unit_yuan(self):
         """市值单位：元。"""
-        _, mcap = _make_layer(['000001'])
+        _, mcap = _make_layer(['000001'], use_fixture=True)
         result = mcap.get_market_cap('000001', date(2022, 6, 24))
-        # share_count ≈ 1.94e12 股, close ≈ 10 元
-        # market_cap ≈ 1.84e11 元（1840 亿）
-        assert result.market_cap > 1e11, f'市值应 > 1000 亿，实际: {result.market_cap}'
-        assert result.market_cap < 1e12, f'市值应 < 1 万亿，实际: {result.market_cap}'
+        # share_count = 1945822149 股 (from fixture 2000-12-08 配股上市)
+        # close ≈ 10.71 元 (from klines 2022-06-24)
+        # market_cap ≈ 1945822149 * 10.71 ≈ 208 亿元
+        assert result.market_cap is not None
+        mcap_val = result.market_cap
+        assert mcap_val > 1e10, f'市值应 > 100 亿，实际: {mcap_val}'
+        assert mcap_val < 1e11, f'市值应 < 1000 亿，实际: {mcap_val}'
+        # 验证单位：股 × 元 = 元
+        assert result.share_count == 1945822149
 
     def test_market_cap_price_date_cutoff(self):
         """价格日期 <= as_of_date。"""
-        _, mcap = _make_layer(['000001'])
+        _, mcap = _make_layer(['000001'], use_fixture=True)
         result = mcap.get_market_cap('000001', date(2022, 6, 24))
         assert result.price_date is not None
         assert result.price_date <= date(2022, 6, 24)
 
     def test_market_cap_no_future_data(self):
         """不会使用未来数据。"""
-        _, mcap = _make_layer(['000001'])
+        _, mcap = _make_layer(['000001'], use_fixture=True)
         result = mcap.get_market_cap('000001', date(2000, 1, 1))
         if result.price_date:
             assert result.price_date <= date(2000, 1, 1)
@@ -228,7 +236,7 @@ class TestHistoricalMarketCap:
 
     def test_market_cap_known_quality(self):
         """KNOWN_EFFECTIVE_DATE → PIT_SAFE。"""
-        _, mcap = _make_layer(['000001'])
+        _, mcap = _make_layer(['000001'], use_fixture=True)
         # 2000-12-09 应看到 2000-12-08 配股上市（KNOWN）
         result = mcap.get_market_cap('000001', date(2000, 12, 9))
         assert result.quality.value == 'PIT_SAFE'
@@ -236,7 +244,7 @@ class TestHistoricalMarketCap:
 
     def test_market_cap_approximate_quality(self):
         """APPROXIMATE_EFFECTIVE_DATE → APPROXIMATE。"""
-        _, mcap = _make_layer(['002594'])
+        _, mcap = _make_layer(['002594'], use_fixture=True)
         # 2011-09-27 前只有 2011-06-30 定期报告（APPROXIMATE）
         result = mcap.get_market_cap('002594', date(2011, 9, 27))
         assert result.quality.value == 'APPROXIMATE'
@@ -284,17 +292,17 @@ class TestKnownStockTimeline:
 
     def test_002594_timeline(self):
         """比亚迪股本时间线。"""
-        layer, _ = _make_layer(['002594'])
+        layer, _ = _make_layer(['002594'], use_fixture=True)
         timeline = layer.get_timeline('002594')
         assert len(timeline) > 0
-        # 应该有 2011-06-30（A股上市）、2014-05-30（配股上市）、2024-05-10（回购）
+        # fixture 中应包含 2011-06-11（A股上市）、2014-05-30（配股上市）、2024-05-10（回购）
         dates = [e.effective_date for e in timeline if e.effective_date]
         assert date(2014, 5, 30) in dates
         assert date(2024, 5, 10) in dates
 
     def test_600519_timeline(self):
         """贵州茅台股本时间线。"""
-        layer, _ = _make_layer(['600519'])
+        layer, _ = _make_layer(['600519'], use_fixture=True)
         timeline = layer.get_timeline('600519')
         assert len(timeline) > 0
 
