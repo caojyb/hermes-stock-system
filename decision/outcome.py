@@ -116,13 +116,16 @@ class Outcome:
     action: str = ''               # BUY/ADD/HOLD/REDUCE/SELL/NO_TRADE
     strategy: str = ''
     strategy_version: str = ''
-    outcome_source: str = SOURCE_LEGACY  # DECISION/LEGACY/SHADOW/UNKNOWN
+    outcome_source: str = SOURCE_LEGACY  # DECISION/LEGACY/SHADOW/UNKNOWN/TEST/SIMULATION
+    execution_source: str = ''     # Phase 7.1: 实际 execution source（SIMULATION/MANUAL_CONFIRMATION/PRODUCTION）
+    data_quality: str = ''         # Phase 7.1: VALID/DEGRADED/UNKNOWN/TEST/SIMULATION
 
     # 时间
-    decision_time: str = ''
+    decision_time: str = ''        # Phase 7.1: decision 生成时间
     execution_time: str = ''       # 无真实成交时间 → UNKNOWN（不用 decision 冒充）
     exit_time: str = ''
     as_of_time: str = ''
+    holding_period_days: int = 0   # Phase 7.1: 0 = UNKNOWN（不要用 0 伪装有效数据）
 
     # planned vs actual
     planned: Planned = field(default_factory=Planned)
@@ -130,7 +133,6 @@ class Outcome:
 
     # lifecycle
     lifecycle_status: str = UNKNOWN   # DECIDED/EXECUTED/OPEN/CLOSED/CANCELLED/UNKNOWN
-    holding_period_days: int = 0
     exit_reason: str = UNKNOWN
     exit_triggers: list = field(default_factory=list)
 
@@ -138,12 +140,25 @@ class Outcome:
     excursion: Excursion = field(default_factory=Excursion)
 
     # market
-    entry_regime: str = ''
-    exit_regime: str = ''
+    entry_regime: str = ''         # Phase 7.1: 决策时的 Regime
+    exit_regime: str = ''          # Phase 7.1: 退出时的 Regime
 
     # portfolio provenance
     portfolio_snapshot_id: str = ''
     position_id: str = ''           # Phase 6.7：对应 entry execution 的 position_id
+
+    # Phase 7.1: Evaluation Metadata（从 Decision 传递）
+    candidate_score: float = 0.0   # Phase 7.1: 候选评分（缺失 = 0.0 + MISSING 标记）
+    candidate_rank: int = 0        # Phase 7.1: 候选排名
+    candidate_reason_codes: list = field(default_factory=list)  # Phase 7.1
+    permission_status: str = ''    # Phase 7.1: ALLOW/REDUCE/NO_NEW_ENTRY/EXIT_ONLY
+    permission: dict = field(default_factory=dict)  # Phase 7.1
+    portfolio_assessment: dict = field(default_factory=dict)  # Phase 7.1
+    portfolio_drawdown: float = 0.0  # Phase 7.1
+    portfolio_risk_flags: list = field(default_factory=list)  # Phase 7.1
+    slippage_price: float = 0.0    # Phase 7.1: 执行滑点
+    slippage_quantity: float = 0.0  # Phase 7.1
+    execution_delay_seconds: int = 0  # Phase 7.1
 
     # provenance
     decision_snapshot_id: str = ''

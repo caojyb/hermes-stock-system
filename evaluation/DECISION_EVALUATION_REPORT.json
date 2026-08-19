@@ -1,0 +1,94 @@
+{
+  "generated_at": "2026-08-19T02:58:17.375336+00:00",
+  "baseline": {
+    "tag": "hermes-stock-phase-6.8",
+    "commit": "adbf3ee"
+  },
+  "dataset": {
+    "production": 0,
+    "shadow": 0,
+    "legacy": 15,
+    "counterfactual": 0
+  },
+  "data_quality": {
+    "production_missing_decision_id": 0,
+    "legacy_missing_decision_id": 0,
+    "unknown_mae_mfe": 0
+  },
+  "production": {
+    "base_stats": {
+      "N": 0,
+      "DATA_INSUFFICIENT": true
+    },
+    "by_regime": {},
+    "by_exit_reason": {},
+    "by_action": {},
+    "by_strategy": {},
+    "time_stability": {
+      "yearly": {},
+      "quarterly": {}
+    }
+  },
+  "shadow": {
+    "base_stats": {
+      "N": 0,
+      "DATA_INSUFFICIENT": true
+    },
+    "by_regime": {},
+    "by_strategy": {}
+  },
+  "legacy": {
+    "base_stats": {
+      "N": 15,
+      "win_rate": 0.9333333333333333,
+      "avg_return": 0.18666666666666668,
+      "median_return": 0.2,
+      "profit_factor": 0.0,
+      "avg_holding_period": 0.0,
+      "avg_mae": 0.0,
+      "avg_mfe": 0.0,
+      "max_drawdown": 0.0,
+      "return_distribution": {
+        "min": 0.0,
+        "max": 0.2,
+        "median": 0.2
+      },
+      "DATA_INSUFFICIENT": false
+    }
+  },
+  "permission_evaluation": {
+    "allowed_N": 0,
+    "blocked_N": 0,
+    "allowed_stats": {
+      "N": 0,
+      "DATA_INSUFFICIENT": true
+    },
+    "blocked_stats": {
+      "N": 0,
+      "DATA_INSUFFICIENT": true
+    }
+  },
+  "position_sizing": {},
+  "decision_execution_quality": {},
+  "no_trade_value": {},
+  "hold_reduce_sell": {},
+  "regime_transition": {},
+  "entry_signal": {},
+  "candidate_score": {},
+  "facts_evidence_hypotheses": {
+    "facts": [],
+    "evidence": [],
+    "hypotheses": [
+      "Production 样本不足，需积累更多真实 Decision/Outcome"
+    ]
+  },
+  "final_answers": {},
+  "known_limitations": [
+    "Outcome MAE/MFE 多为 UNKNOWN（仿真数据未记录 excursion）",
+    "Candidate Score 分层暂缺（当前无 score 字段）",
+    "Regime Transition 依赖 entry/exit_regime 数据填充",
+    "NO_TRADE Counterfactual 缺少候选池",
+    "Trading Permission 阻断样本量少，Counterfactual 受样本限制",
+    "时间稳定性样本仅覆盖测试期（约 2026-08-19）"
+  ]
+}

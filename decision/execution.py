@@ -82,6 +82,19 @@ class Execution:
     created_at: str = ''
     # linkage 元数据
     linkage: str = ''              # LINKAGE_FALLBACK / LEGACY / 空=结构化
+    # Phase 7.1: Evaluation Metadata（从 Decision 传递）
+    entry_regime: str = ''         # 决策时的 market_regime
+    candidate_score: float = 0.0   # 候选评分
+    candidate_rank: int = 0        # 候选排名
+    candidate_reason_codes: list = field(default_factory=list)
+    permission_status: str = ''    # ALLOW/REDUCE/NO_NEW_ENTRY/EXIT_ONLY
+    permission: dict = field(default_factory=dict)
+    portfolio_assessment: dict = field(default_factory=dict)
+    portfolio_drawdown: float = 0.0
+    portfolio_risk_flags: list = field(default_factory=list)
+    planned_entry_price: float = 0.0  # 决策时的 planned entry price
+    planned_entry_quantity: float = 0.0  # 决策时的 planned quantity
+    decision_time: str = ''        # 决策生成时间
 
     def freeze(self) -> dict:
         return asdict(self)
@@ -136,6 +149,19 @@ def record_simulation_execution(decision, action, entry_price, quantity, positio
         position_status=OPEN if status == EXECUTED else (PARTIAL if status == PARTIAL else UNKNOWN),
         decision_snapshot_id=decision.get('data_snapshot_id', ''),
         portfolio_snapshot_id=decision.get('portfolio_snapshot_id', ''),
+        # Phase 7.1：从 decision 复制 evaluation metadata
+        entry_regime=decision.get('market_regime', '') or decision.get('regime_label', ''),
+        candidate_score=float(decision.get('candidate_score', 0) or 0),
+        candidate_rank=int(decision.get('candidate_rank', 0) or 0),
+        candidate_reason_codes=list(decision.get('reason_codes', []) or []),
+        permission_status=decision.get('permission_status', '') or '',
+        permission=dict(decision.get('permission', {}) or {}),
+        portfolio_assessment=dict(decision.get('portfolio_assessment', {}) or {}),
+        portfolio_drawdown=float(decision.get('portfolio_drawdown', 0) or 0),
+        portfolio_risk_flags=list(decision.get('risk_flags', []) or []),
+        planned_entry_price=float(decision.get('reference_price', 0) or 0),
+        planned_entry_quantity=float(decision.get('target_position', 0) or 0),
+        decision_time=decision.get('timestamp', '') or _now(),
     )
     # Phase 6.7：position_id 由 Entry Execution 自身生命周期标识
     if _normalize_action(action) in _exec_action_set() and status == EXECUTED:
@@ -238,6 +264,79 @@ def build_outcome_from_execution(execution_id, decision=None):
     pid = ex.get('position_id', '')
     pos = aggregate_position(pid) if pid else None
     entry = ex['actual'].get('price', 0)
+    # Phase 7.1: 直接从 execution 提取 evaluation metadata（record_simulation_execution 已写入）
+    entry_regime = ex.get('entry_regime', '')
+    exit_regime = ''  # Phase 7.1: 从 exit decision/execution 提取（待实现）
+    candidate_score = float(ex.get('candidate_score', 0) or 0)
+    candidate_rank = int(ex.get('candidate_rank', 0) or 0)
+    candidate_reason_codes = list(ex.get('candidate_reason_codes', []) or [])
+    permission_status = ex.get('permission_status', '') or ''
+    permission = dict(ex.get('permission', {}) or {})
+    portfolio_assessment = dict(ex.get('portfolio_assessment', {}) or {})
+    portfolio_drawdown = float(ex.get('portfolio_drawdown', 0) or 0)
+    portfolio_risk_flags = list(ex.get('portfolio_risk_flags', []) or [])
+    decision_time = ex.get('decision_time', '') or ex.get('execution_time', '')
+    planned_price = float(ex.get('planned_entry_price', 0) or 0) or (ex.get('planned') or {}).get('price', 0)
+    planned_qty = float(ex.get('planned_entry_quantity', 0) or 0) or (ex.get('planned') or {}).get('quantity', 0)
+    actual_price = entry
+    actual_qty = (ex.get('actual') or {}).get('quantity', 0)
+    slippage_price = 0.0
+    slippage_quantity = 0.0
+    execution_delay_seconds = 0
+
+    # 如果 execution 为空，尝试从 decision snapshot 读取（Phase 7.1 兼容）
+    if not entry_regime or not candidate_score:
+        decision_snap = None
+        if ex.get('decision_snapshot_id'):
+            snap_path = Path(__file__).resolve().parent / 'snapshots' / f"{ex['decision_snapshot_id']}.json"
+            if snap_path.exists():
+                try:
+                    decision_snap = json.load(open(snap_path))
+                except Exception:
+                    decision_snap = None
+        if decision_snap:
+            if not entry_regime:
+                entry_regime = decision_snap.get('market_regime', '') or decision_snap.get('regime_label', '')
+            if not candidate_score:
+                candidate_score = float(decision_snap.get('candidate_score', 0) or 0)
+            if not candidate_rank:
+                candidate_rank = int(decision_snap.get('candidate_rank', 0) or 0)
+            if not candidate_reason_codes:
+                candidate_reason_codes = list(decision_snap.get('reason_codes', []) or [])
+            if not permission_status:
+                permission_status = decision_snap.get('permission_status', '') or ''
+            if not permission:
+                permission = dict(decision_snap.get('permission', {}) or {})
+            if not portfolio_assessment:
+                portfolio_assessment = dict(decision_snap.get('portfolio_assessment', {}) or {})
+            if not portfolio_drawdown:
+                portfolio_drawdown = float(decision_snap.get('portfolio_drawdown', 0) or 0)
+            if not decision_time:
+                decision_time = decision_snap.get('timestamp', '') or decision_time
+            if not planned_price:
+                planned_price = float(decision_snap.get('reference_price', 0) or 0)
+            if not planned_qty:
+                planned_qty = float(decision_snap.get('target_position', 0) or 0)
+
+    # Calculate slippage
+    if actual_price and planned_price:
+        slippage_price = round(actual_price - planned_price, 4)
+    if actual_qty and planned_qty:
+        slippage_quantity = round(actual_qty - planned_qty, 4)
+
+    # Calculate holding period
+    holding_days = 0
+    if ex.get('execution_time') and ex.get('exit', {}).get('time'):
+        try:
+            from datetime import datetime
+            fmt = '%Y-%m-%dT%H:%M:%S' if 'T' in (ex.get('exit', {}).get('time') or '') else '%Y-%m-%d'
+            t_entry = datetime.fromisoformat(ex['execution_time'].replace('Z', '+00:00'))
+            t_exit = datetime.fromisoformat(ex['exit']['time'] + 'T00:00:00+00:00' if 'T' not in ex['exit']['time'] else ex['exit']['time'])
+            holding_days = (t_exit - t_entry).days
+        except Exception:
+            holding_days = 0
+
+    # Phase 6.8：基于完整 position lifecycle 聚合数量/成本
     if pos and pos.get('total_entry_quantity'):
         total_entry_qty = pos['total_entry_quantity']
         avg_cost = pos['average_entry_price']
@@ -272,6 +371,17 @@ def build_outcome_from_execution(execution_id, decision=None):
         weighted_exit = exit_price
     if not exit_price:
         return None
+
+    # Phase 7.1: Determine execution source and data quality
+    exec_source = ex.get('source', '')
+    data_quality = 'VALID'
+    if exec_source == 'SIMULATION' or any(x in (ex.get('decision_id', '') or '') for x in ['p67', 'p68', 'p7_', 'test_']):
+        data_quality = 'TEST'
+    elif exec_source == 'SIMULATION':
+        data_quality = 'SIMULATION'
+    elif exec_source == 'MANUAL_CONFIRMATION':
+        data_quality = 'PRODUCTION'
+
     o = Outcome(
         outcome_id=gen_outcome_id(),
         decision_id=ex.get('decision_id', ''),
@@ -279,10 +389,13 @@ def build_outcome_from_execution(execution_id, decision=None):
         action=ex.get('action', ''), strategy=ex.get('strategy', 'v1_double'),
         strategy_version=ex.get('strategy_version', ''),
         outcome_source=SOURCE_DECISION if ex.get('decision_id') else SOURCE_LEGACY,
+        execution_source=exec_source,
+        data_quality=data_quality,
+        decision_time=decision_time,
         execution_time=ex.get('execution_time', ''),
         exit_time=ex.get('exit', {}).get('time', ''),
-        planned=Planned(entry_price=ex.get('planned', {}).get('price', 0),
-                        target_position=ex.get('planned', {}).get('position', 0)),
+        holding_period_days=holding_days if holding_days > 0 else 0,
+        planned=Planned(entry_price=planned_price, target_position=planned_qty),
         actual=Actual(entry_price=entry, position_size=total_entry_qty,
                       exit_price=round(exit_price, 4),
                       realized_pnl=round(realized, 4), return_pct=round(ret, 4),
@@ -295,10 +408,24 @@ def build_outcome_from_execution(execution_id, decision=None):
                       final_quantity=total_entry_qty - total_exit_qty),
         lifecycle_status=CLOSED,
         exit_reason=ex.get('exit', {}).get('reason', UNKNOWN),
+        entry_regime=entry_regime,
+        exit_regime=exit_regime,
         portfolio_snapshot_id=ex.get('portfolio_snapshot_id', ''),
         decision_snapshot_id=ex.get('decision_snapshot_id', ''),
-        code_version='p68',
+        code_version='p71',
         position_id=pid,
+        # Phase 7.1 evaluation metadata
+        candidate_score=candidate_score,
+        candidate_rank=candidate_rank,
+        candidate_reason_codes=candidate_reason_codes,
+        permission_status=permission_status,
+        permission=permission,
+        portfolio_assessment=portfolio_assessment,
+        portfolio_drawdown=portfolio_drawdown,
+        portfolio_risk_flags=portfolio_risk_flags,
+        slippage_price=slippage_price,
+        slippage_quantity=slippage_quantity,
+        execution_delay_seconds=execution_delay_seconds,
     )
     return o
 
