@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Execution & Outcome Capture（Phase 6.5）
-========================================
+Execution & Outcome Capture（Phase 6.5 + Phase 6.7 Hardening）
+=============================================================
 让每个新 Production Decision 进入 Execution → Position → Exit → Outcome 生命周期。
 
 - Execution Record：decision_id → execution_id，planned/actual 严格分离
-- Simulation 自动写 Execution（关联 decision_id）
+- Position Lifecycle Identity：每个 Entry Execution 拥有独立 position_id
+- Simulation 自动写 Execution（关联 decision_id + position_id）
 - Real 人工执行确认（PENDING → EXECUTED/PARTIAL/REJECTED/NOT_EXECUTED）
-- Position Lifecycle：EXECUTED → OPEN → UPDATE → CLOSED
-- Position=CLOSED + Execution/Exit 充分 → 自动生成 Outcome
-- 数据断链 → DATA_GAP（不静默丢失）
+- Exit / Outcome 优先使用 entry_execution_id 和 position_id 精确关联
+- 同股票多次持仓互不串联
+- 数据断链 → DATA_GAP / LINKAGE_FALLBACK（不静默丢失）
 """
 from __future__ import annotations
 import json, os, glob
@@ -39,6 +40,10 @@ SRC_SIM = 'SIMULATION'
 SRC_MANUAL = 'MANUAL_CONFIRMATION'
 SRC_SHADOW = 'SHADOW_SIMULATION'
 
+# ═══ Fallback 标记 ═══
+LINKAGE_FALLBACK = 'LINKAGE_FALLBACK'
+SOURCE_LEGACY_MARKER = 'LEGACY'
+
 
 def gen_exec_id():
     return f"exec_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{uuid4().hex[:8]}"
@@ -64,13 +69,19 @@ class Execution:
     actual: dict = field(default_factory=dict)    # {price, quantity, position}
     execution_time: str = ''
     notes: str = ''
-    # Position Lifecycle
+    # Position Lifecycle Identity（Phase 6.7）
+    position_id: str = ''          # 唯一标识一次独立持仓生命周期
     position_status: str = UNKNOWN  # OPEN/CLOSED/PARTIAL
     exit: dict = field(default_factory=dict)      # {price, quantity, time, reason, status}
+    # Exit Execution 精确关联（Phase 6.7）
+    entry_execution_id: str = ''   # 本笔 Exit 对应的 Entry Execution
+    exit_decision_id: str = ''     # 本笔 Exit Decision 的 decision_id
     # provenance
     decision_snapshot_id: str = ''
     portfolio_snapshot_id: str = ''
     created_at: str = ''
+    # linkage 元数据
+    linkage: str = ''              # LINKAGE_FALLBACK / LEGACY / 空=结构化
 
     def freeze(self) -> dict:
         return asdict(self)
@@ -111,7 +122,7 @@ def find_execution(decision_id):
 
 def record_simulation_execution(decision, action, entry_price, quantity, position=0.0,
                                 status=EXECUTED):
-    """Simulation 自动写 Execution（关联 decision_id）。"""
+    """Simulation 自动写 Execution（关联 decision_id + position_id）。"""
     ex = Execution(
         decision_id=decision.get('decision_id', ''),
         symbol=decision.get('symbol', ''), name=decision.get('name', ''),
@@ -126,7 +137,11 @@ def record_simulation_execution(decision, action, entry_price, quantity, positio
         decision_snapshot_id=decision.get('data_snapshot_id', ''),
         portfolio_snapshot_id=decision.get('portfolio_snapshot_id', ''),
     )
-    return save_execution(ex)
+    # Phase 6.7：position_id 由 Entry Execution 自身生命周期标识
+    if _normalize_action(action) in _exec_action_set() and status == EXECUTED:
+        ex.position_id = gen_position_id(decision.get('symbol', ''), _now())
+    eid = save_execution(ex)
+    return eid
 
 
 def confirm_manual_execution(decision_id, actual_price, actual_quantity,
@@ -161,20 +176,43 @@ def confirm_manual_execution(decision_id, actual_price, actual_quantity,
     return ex['execution_id']
 
 
-def record_exit(execution_id, exit_price, exit_quantity, exit_time, exit_reason, status='CLOSED'):
+def record_exit(execution_id, exit_price, exit_quantity, exit_time, exit_reason, status='CLOSED',
+                entry_execution_id='', exit_decision_id=''):
     """记录卖出/退出（人工或模拟），支持多段退出（TP1/TP2/TP3/REDUCE）。
-    追加 exit segment，更新 Position Lifecycle；最终 CLOSED 后由 build_outcome 计算加权结果。"""
+    追加 exit segment，更新 Position Lifecycle；最终 CLOSED 后由 build_outcome 计算加权结果。
+    Phase 6.7：优先使用 entry_execution_id 精确关联，不依赖 symbol。"""
     ex = get_execution(execution_id)
     if not ex:
-        return None
+        # 若 execution_id 不存在但提供 entry_execution_id：回退到 entry 记录退出段
+        target = get_execution(entry_execution_id) if entry_execution_id else None
+        if not target:
+            return None
+        target.setdefault('exit_segments', []).append({
+            'price': exit_price, 'quantity': exit_quantity,
+            'time': exit_time or _now(), 'reason': map_exit_reason([exit_reason]),
+            'status': status, 'exit_decision_id': exit_decision_id, 'linkage': LINKAGE_FALLBACK,
+        })
+        target['exit'] = {'price': exit_price, 'quantity': exit_quantity,
+                          'time': exit_time or _now(), 'reason': map_exit_reason([exit_reason]),
+                          'status': status}
+        target['position_status'] = status
+        with open(_exec_path(entry_execution_id), 'w') as f:
+            json.dump(target, f, ensure_ascii=False, indent=2, default=str)
+        return entry_execution_id
+
     segments = ex.setdefault('exit_segments', [])
     segments.append({'price': exit_price, 'quantity': exit_quantity,
                      'time': exit_time or _now(), 'reason': map_exit_reason([exit_reason]),
-                     'status': status})
+                     'status': status, 'exit_decision_id': exit_decision_id,
+                     'entry_execution_id': entry_execution_id or ex.get('entry_execution_id', '')})
     ex['exit'] = {'price': exit_price, 'quantity': exit_quantity,
                   'time': exit_time or _now(), 'reason': map_exit_reason([exit_reason]),
                   'status': status}
-    ex['position_status'] = status  # CLOSED / PARTIAL(部分)
+    ex['position_status'] = status
+    if entry_execution_id:
+        ex['entry_execution_id'] = entry_execution_id
+    if exit_decision_id:
+        ex['exit_decision_id'] = exit_decision_id
     # 累加总退出数量 + 加权退出价（供最终 Outcome）
     total_qty = sum(s['quantity'] for s in segments if s['quantity'])
     if total_qty:
@@ -230,7 +268,8 @@ def build_outcome_from_execution(execution_id, decision=None):
         exit_reason=ex.get('exit', {}).get('reason', UNKNOWN),
         portfolio_snapshot_id=ex.get('portfolio_snapshot_id', ''),
         decision_snapshot_id=ex.get('decision_snapshot_id', ''),
-        code_version='p66',
+        code_version='p67',
+        position_id=ex.get('position_id', ''),
     )
     return o
 
@@ -254,15 +293,25 @@ def find_unlinked_decisions(recent_days=None):
     return unlinked
 
 
+def _normalize_action(a: str) -> str:
+    return str(a).upper()
+
+
+def _exec_action_set() -> set[str]:
+    return {_normalize_action(x) for x in ('BUY', 'ADD', 'REDUCE')}
+
+
 def find_entry_execution(symbol, status=EXECUTED, action='BUY'):
-    """按 symbol 找 Entry Execution（BUY 且已 EXECUTED，可含已平仓）。返回最新一个。"""
+    """按 symbol 找 Entry Execution（BUY/ADD 且 status=EXECUTED），可用于历史/replay。
+    生产链路优先用 position_id / entry_execution_id；symbol 仅做 fallback。"""
     found = []
+    req_action = _normalize_action(action)
     for f in glob.glob(str(_EXEC_DIR / '*.json')):
         try:
             e = json.load(open(f))
         except Exception:
             continue
-        if (e.get('symbol') == symbol and e.get('action', '').upper() == action.upper()
+        if (e.get('symbol') == symbol and _normalize_action(e.get('action', '')) == req_action
                 and e.get('status') == status):
             found.append(e)
     if not found:
@@ -271,44 +320,171 @@ def find_entry_execution(symbol, status=EXECUTED, action='BUY'):
     return found[-1]
 
 
-def record_sim_exit_and_outcome(symbol, exit_price, exit_quantity, exit_reason, exit_time=''):
+def find_open_entry_execution(symbol, status=EXECUTED, action='BUY'):
+    """仅找当前未平仓的 Entry Execution（OPEN/PARTIAL/UNKNOWN）。用于持仓扫描。"""
+    found = []
+    req_action = _normalize_action(action)
+    for f in glob.glob(str(_EXEC_DIR / '*.json')):
+        try:
+            e = json.load(open(f))
+        except Exception:
+            continue
+        ps = e.get('position_status', '')
+        if (e.get('symbol') == symbol and _normalize_action(e.get('action', '')) == req_action
+                and e.get('status') == status and ps in (OPEN, PARTIAL, UNKNOWN)):
+            found.append(e)
+    if not found:
+        return None
+    found.sort(key=lambda x: x.get('created_at', ''))
+    return found[0]
+
+
+def find_entry_execution_by_position_id(position_id):
+    if not position_id:
+        return None
+    for f in glob.glob(str(_EXEC_DIR / '*.json')):
+        try:
+            e = json.load(open(f))
+        except Exception:
+            continue
+        if e.get('position_id') == position_id and _normalize_action(e.get('action', '')) in _exec_action_set():
+            return e
+    return None
+
+
+def find_executions_by_position_id(position_id):
+    if not position_id:
+        return []
+    out = []
+    for f in glob.glob(str(_EXEC_DIR / '*.json')):
+        try:
+            e = json.load(open(f))
+        except Exception:
+            continue
+        if e.get('position_id') == position_id:
+            out.append(e)
+    out.sort(key=lambda x: x.get('created_at', ''))
+    return out
+
+
+def find_exit_executions(entry_execution_id):
+    """按 entry_execution_id 找该笔生命周期内全部 Exit Execution。"""
+    if not entry_execution_id:
+        return []
+    out = []
+    for f in glob.glob(str(_EXEC_DIR / '*.json')):
+        try:
+            e = json.load(open(f))
+        except Exception:
+            continue
+        if e.get('entry_execution_id') == entry_execution_id:
+            out.append(e)
+    out.sort(key=lambda x: x.get('created_at', ''))
+    return out
+
+
+def _find_any_execution(symbol, action='BUY', status=EXECUTED):
+    """仅用于 Legacy fallback：symbol 最近同 action execution。"""
+    found = []
+    req_action = _normalize_action(action)
+    for f in glob.glob(str(_EXEC_DIR / '*.json')):
+        try:
+            e = json.load(open(f))
+        except Exception:
+            continue
+        if (e.get('symbol') == symbol and _normalize_action(e.get('action', '')) == req_action
+                and e.get('status') == status):
+            found.append(e)
+    if not found:
+        return None
+    found.sort(key=lambda x: x.get('created_at', ''))
+    return found[-1]
+
+
+def gen_position_id(symbol: str, created_at: str, suffix: str = '') -> str:
+    """生成唯一 position_id（同一股票不同时间 = 不同生命周期）。"""
+    base = (created_at or datetime.now(timezone.utc).isoformat()).replace(':', '').replace('-', '')[:18]
+    # 高精度后缀避免同秒多次调用重复
+    suffix = suffix or uuid4().hex[:6]
+    return f"P_{base}_{symbol}_{suffix}"
+
+
+def record_sim_exit_and_outcome(symbol, exit_price, exit_quantity, exit_reason, exit_time='',
+                                decision_id='', entry_execution_id='', position_id='',
+                                exit_decision_id=''):
     """Simulation Exit → Execution + Outcome Closure。
-    找该 symbol 的 Entry Execution → record_exit → build Outcome → save。
-    legacy（无 entry execution）→ 仅返回 None（不强制生成，不伪造）。"""
+    Phase 6.7 精确关联优先级：
+    1) entry_execution_id → 2) decision_id + symbol → 3) position_id → 4) Legacy fallback。
+    Legacy（无结构化信息）→ 返回 None 且标记 LINKAGE_FALLBACK，不伪造。"""
     from . import outcome_store as os_
-    entry = find_entry_execution(symbol)
+    entry = None
+    linkage = ''
+    if entry_execution_id:
+        entry = get_execution(entry_execution_id)
+        linkage = 'STRUCTURED'
+    if not entry and decision_id:
+        exs = find_execution(decision_id)
+        # 优先找该 decision 的 entry execution（BUY/ADD）
+        entry = next((e for e in exs if _normalize_action(e.get('action', '')) in _exec_action_set()), None)
+        linkage = 'STRUCTURED' if entry else ''
+    if not entry and position_id:
+        entry = find_entry_execution_by_position_id(position_id)
+        linkage = 'STRUCTURED' if entry else ''
     if not entry:
-        return None, None
+        entry = find_entry_execution(symbol)
+        linkage = LINKAGE_FALLBACK if entry else SOURCE_LEGACY_MARKER
+    if not entry:
+        return None, None, linkage
     eid = entry['execution_id']
-    record_exit(eid, exit_price, exit_quantity, exit_time, exit_reason)
+    pid = entry.get('position_id', position_id)
+    record_exit(eid, exit_price, exit_quantity, exit_time, exit_reason,
+                entry_execution_id=eid, exit_decision_id=exit_decision_id)
+    e = get_execution(eid)
+    if e and linkage:
+        e['linkage'] = linkage
+        with open(_exec_path(eid), 'w') as f:
+            json.dump(e, f, ensure_ascii=False, indent=2, default=str)
     o = build_outcome_from_execution(eid)
     if o:
         os_.save_outcome(o)
-        # 回写 outcome_id 到 execution（供 monitor 识别已闭环）
-        e = get_execution(eid)
-        if e:
-            e['outcome_id'] = o.outcome_id
+        e2 = get_execution(eid)
+        if e2:
+            e2['outcome_id'] = o.outcome_id
             with open(_exec_path(eid), 'w') as f:
-                json.dump(e, f, ensure_ascii=False, indent=2, default=str)
-        return eid, o
-    return eid, None
+                json.dump(e2, f, ensure_ascii=False, indent=2, default=str)
+        return eid, o, linkage
+    return eid, None, linkage
 
 
 def lifecycle_replay(outcome_id):
-    """恢复完整生命周期链：
-    Outcome → Exit Execution(s) → Entry Execution → Entry Decision → Portfolio Snapshot → Regime。"""
+    """恢复完整生命周期链（Phase 6.7）：
+    Outcome → Exit Execution(s) → Entry Execution → Entry Decision → Portfolio Snapshot → Regime。
+    优先使用 position_id / entry_execution_id；无结构化信息时回退到 symbol/decision_id。"""
     from . import outcome_store as os_
     r = os_.replay(outcome_id)
     if not r['ok']:
         return r
     outcome = r['outcome']
-    # 找 entry execution（按 symbol + decision）
     did = outcome.get('decision_id', '')
+    position_id = outcome.get('position_id', '')
     entry_exec = None
     entry_decision = None
-    exs = find_execution(did) if did else []
-    # 若有该 decision 的 execution（exit decision 可能不是 entry）→ 用 entry execution 找
-    entry_exec = find_entry_execution(outcome.get('symbol', ''))
+    exit_executions = []
+    # 1) 有 position_id 优先
+    if position_id:
+        all_execs = find_executions_by_position_id(position_id)
+        entry_exec = next((e for e in all_execs if _normalize_action(e.get('action', '')) in _exec_action_set()), None)
+        exit_executions = [e for e in all_execs if e.get('entry_execution_id') == (entry_exec or {}).get('execution_id')]
+    # 2) 退而求其次 decision_id
+    if not entry_exec and did:
+        exs = find_execution(did)
+        entry_exec = next((e for e in exs if _normalize_action(e.get('action', '')) in _exec_action_set()), None)
+        exit_executions = [e for e in exs if e.get('entry_execution_id') == (entry_exec or {}).get('execution_id')]
+    # 3) symbol fallback（兼容历史/Legacy Outcome）
+    if not entry_exec:
+        entry_exec = _find_any_execution(outcome.get('symbol', ''), action='BUY', status=EXECUTED)
+        if entry_exec:
+            exit_executions = find_exit_executions(entry_exec.get('execution_id', ''))
     if did:
         dp = Path(__file__).resolve().parent / 'snapshots' / f"{did}.json"
         if dp.exists():
@@ -316,9 +492,11 @@ def lifecycle_replay(outcome_id):
     return {
         'ok': True,
         'outcome': outcome,
-        'exit_executions': exs,
+        'exit_executions': exit_executions,
         'entry_execution': entry_exec,
         'entry_decision': entry_decision,
+        'position_id': position_id,
+        'linkage': (entry_exec or {}).get('linkage', ''),
         'decision_snapshot_id': outcome.get('decision_snapshot_id', ''),
         'portfolio_snapshot_id': outcome.get('portfolio_snapshot_id', ''),
         'regime': (entry_decision or {}).get('regime_label', ''),

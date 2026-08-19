@@ -84,6 +84,7 @@ def build_from_trade(trade, regime=''):
         exit_triggers=[trade.get('status', '')] if trade.get('status') else [],
         entry_regime=regime,
         decision_quality=UNKNOWN, execution_quality=UNKNOWN,
+        position_id='',
     )
     # MAE/MFE
     if trade.get('buy_date'):
@@ -108,6 +109,7 @@ def build_open_from_real(pos, snapshot, regime=''):
         portfolio_snapshot_id=snapshot.get('snapshot_id', '') if snapshot else '',
         entry_regime=regime,
         decision_quality=UNKNOWN, execution_quality=UNKNOWN,
+        position_id='',
     )
     if pos.get('buy_date'):
         o.excursion = compute_mae_mfe(pos.get('code', ''), pos['buy_date'])
@@ -136,6 +138,7 @@ def build_from_decision(decision, symbol='', action='', regime=''):
         config_version=decision.get('config_version', ''),
         code_version=decision.get('code_version', ''),
         decision_quality=UNKNOWN, execution_quality=UNKNOWN,
+        position_id='',
     )
     return o
 

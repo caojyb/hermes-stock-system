@@ -135,6 +135,7 @@ class Outcome:
 
     # portfolio provenance
     portfolio_snapshot_id: str = ''
+    position_id: str = ''           # Phase 6.7：对应 entry execution 的 position_id
 
     # provenance
     decision_snapshot_id: str = ''

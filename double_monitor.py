@@ -717,7 +717,9 @@ for code, h in list(open_map.items()):
         # Phase 6.6: Exit Execution + Outcome Closure（不改退出触发/参数，只归口 lifecycle）
         try:
             from decision.execution import record_sim_exit_and_outcome
-            record_sim_exit_and_outcome(code, curr_price, h['shares'], 'STOP_LOSS', today_str)
+            # 尽量用结构化关联；不额外改策略/参数
+            eid, oid, _ = record_sim_exit_and_outcome(code, curr_price, h['shares'], 'STOP_LOSS', today_str,
+                                                      decision_id=_dec.decision_id)
         except Exception as _e3:
             print(f"  ⚠️ Exit 归口失败: {_e3}")
         open_map.pop(code, None)
@@ -748,7 +750,8 @@ for code, h in list(open_map.items()):
         # Phase 6.6: Exit Execution + Outcome Closure（不改退出触发/参数，只归口 lifecycle）
         try:
             from decision.execution import record_sim_exit_and_outcome
-            record_sim_exit_and_outcome(code, curr_price, h['shares'], 'TAKE_PROFIT', today_str)
+            eid, oid, _ = record_sim_exit_and_outcome(code, curr_price, h['shares'], 'TAKE_PROFIT', today_str,
+                                                      decision_id=_dec.decision_id)
         except Exception as _e3:
             print(f"  ⚠️ Exit 归口失败: {_e3}")
         open_map.pop(code, None)
