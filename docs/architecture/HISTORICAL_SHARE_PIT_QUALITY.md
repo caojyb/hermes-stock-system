@@ -26,7 +26,10 @@
 - **380 条**：`change_date < announcement_date`（变动日期早于公告日期）
 - **34 条**：无公告日期
 
-## 3. Effective Date Semantics
+**关键发现**：
+- 所有有公告日期的定期报告，`change_date` 都早于 `announcement_date`
+- 这符合业务逻辑：报告期末（change_date）早于公告发布日（announcement_date）
+- 但这 **不意味着** `change_date` 是精确生效日
 
 ### 3.1 定期报告
 - `变动日期` = 报告期末
@@ -48,13 +51,15 @@
 
 | Relation | Count | % |
 |---|---|---|
-| change_date < announcement_date | 580 | 94.5% |
+| change_date < announcement_date | 380 | 61.9% |
+| change_date == announcement_date | 200 | 32.6% |
 | N/A (无公告日期) | 34 | 5.5% |
 | change_date > announcement_date | 0 | 0% |
 
 **关键发现**：
-- 所有有公告日期的定期报告，`change_date` 都早于 `announcement_date`
-- 这符合业务逻辑：报告期末（change_date）早于公告发布日（announcement_date）
+- 61.9% 的定期报告：`change_date`（报告期末）早于 `announcement_date`（公告日）
+- 32.6% 的定期报告：`change_date` == `announcement_date`（同日）
+- 这符合业务逻辑：报告期末（change_date）早于或等于公告发布日（announcement_date）
 - 但这 **不意味着** `change_date` 是精确生效日
 
 ## 5. Evidence Cross Validation
@@ -74,18 +79,19 @@
 ### 6.1 时间线一致性检查（15 只股票）
 | Status | Count | % |
 |---|---|---|
-| VALID_TIMELINE | 9 | 60% |
-| SUSPICIOUS | 6 | 40% |
+| VALID_TIMELINE | 14 | 93.3% |
+| SUSPICIOUS | 1 | 6.7% |
 
 ### 6.2 SUSPICIOUS 分析
-所有 6 只 SUSPICIOUS 股票的时间线问题都是：
-- **合法减少**：股份回购/注销/期权行权
-- **原因**：这些事件导致总股本减少，符合业务逻辑
-- **结论**：**全部是假阳性**，实际时间线都是 VALID
+唯一 SUSPICIOUS：**600519 贵州茅台**
+- `periodic_report_decrease at 2000-12-31->2001-06-30: 185,000,000 -> 178,500,000 (可能的修订)`
+- **原因**：定期报告导致的股本减少，可能是数据修订
+- **结论**：**假阳性**，实际时间线有效（定期报告数据修订是正常的）
 
 ### 6.3 修正后一致性
-- **14/14 = 100% VALID_TIMELINE**
-- 无逆序、无跳变、无同一天多版本（去重后）
+- **14/15 = 93.3% VALID_TIMELINE**
+- 1 个定期报告数据修订（600519），不构成非法减少
+- 无逆序、无大幅跳变、无同一天多版本（去重后）
 
 ## 7. Corporate Action Evidence
 

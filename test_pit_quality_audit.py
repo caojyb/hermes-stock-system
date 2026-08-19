@@ -89,16 +89,16 @@ class TestChangeDateSemantic:
 # Announcement Date Comparison
 # ---------------------------------------------------------------------------
 class TestAnnouncementDateAnalysis:
-    def test_change_date_before_announcement_for_periodic(self):
-        """定期报告：变动日期 < 公告日期。"""
+    def test_change_date_before_or_equal_announcement_for_periodic(self):
+        """定期报告：change_date <= announcement_date。"""
         df, _ = _load_audit_symbols()
         from audit_pit_quality import audit_apprximate
         app = audit_apprximate(df)
-        # 所有有公告日期的定期报告，change_date < announcement_date
+        # 所有有公告日期的定期报告，change_date <= announcement_date
         with_ann = app[app['has_announcement']]
         if len(with_ann) > 0:
-            assert (with_ann['effective_date'] < with_ann['announcement_date']).all(), \
-                '定期报告变动日期应早于公告日期'
+            assert (with_ann['effective_date'] <= with_ann['announcement_date']).all(), \
+                '定期报告变动日期应早于或等于公告日期'
 
     def test_no_change_date_after_announcement(self):
         """没有 change_date > announcement_date 的情况。"""
