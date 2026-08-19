@@ -42,15 +42,26 @@
 
 ## 5. Market Cap Sensitivity
 
-### 5.1 当前分布
+### 5.1 重要口径修正
+**Phase 7.3-I 报告中的 "STRICT Candidate coverage = 92.5%" 存在严重口径混淆，必须更正：**
+
+| 口径 | 数值 | 含义 |
+|---|---|---|
+| `CURRENT_UNIVERSE_COVERAGE` | 92.5% | 当前 stocks snapshot 中有 total_mcap 且在 5-90B 范围内的股票占比 |
+| `HISTORICAL_RESEARCH_COVERAGE` | ~76% | 有历史股本数据（含 APPROXIMATE）可重建市值的日期占比 |
+| `HISTORICAL_STRICT_PIT_COVERAGE` | 16.3% | 有 KNOWN effective date 的历史股本可重建 PIT 市值 |
+
+**92.5% 不是 Historical PIT Candidate Coverage。** 它是当前快照的市场分布统计，不是历史可重放覆盖率。
+
+### 5.2 当前市值分布（仅作背景）
 - Total: 5,187
 - With Market Cap: 5,026 (96.9%)
 - Without Market Cap: 161 (3.1%)
-- 5-90B (In Range): 4,799 (92.5%)
+- 5-90B (In Range): 4,799 (92.5%) ← CURRENT_UNIVERSE_COVERAGE
 - <5B: 13
 - >90B: 214
 
-### 5.2 边界分析
+### 5.3 边界分析
 - Borderline 0-5%: 18 只
 - Borderline 0-10%: 34 只
 
@@ -67,14 +78,14 @@
 
 ## 7. Combined Scenarios
 
-| Scenario | Market Cap | ST | Candidates | Coverage |
-|---|---|---|---|---|
-| 1. Strict | STRICT | KNOWN | 4,799 | 92.5% |
-| 2. Research | RESEARCH | KNOWN | 4,799 | 92.5% |
-| 3. Research + ST Best | RESEARCH | UNKNOWN→NORMAL | 4,799 | 92.5% |
-| 4. Research + ST Worst | RESEARCH | UNKNOWN→ST | 4,799 | 92.5% |
+| Scenario | Market Cap | ST | Candidates | Coverage | 口径 |
+|---|---|---|---|---|---|
+| 1. Strict | STRICT | KNOWN | 4,799 | 92.5% | CURRENT_UNIVERSE_COVERAGE |
+| 2. Research | RESEARCH | KNOWN | 4,799 | 92.5% | CURRENT_UNIVERSE_COVERAGE |
+| 3. Research + ST Best | RESEARCH | UNKNOWN→NORMAL | 4,799 | 92.5% | CURRENT_UNIVERSE_COVERAGE |
+| 4. Research + ST Worst | RESEARCH | UNKNOWN→ST | 4,799 | 92.5% | CURRENT_UNIVERSE_COVERAGE |
 
-**关键发现**：所有场景结果相同，因为当前 ST UNKNOWN = 0。但历史 ST 数据缺失意味着实际历史 Replay 中 ST 不确定性会大幅扩大区间。
+**关键发现**：所有场景结果相同，因为当前 ST UNKNOWN = 0，且基于当前快照计算。但历史 ST 数据缺失意味着实际历史 Replay 中 ST 不确定性会大幅扩大区间。历史 PIT 覆盖率必须使用 16.3%（STRICT）和 76%（RESEARCH）。
 
 ## 8. Portfolio Limitation
 - SINGLE_STOCK_REPLAY: RECONSTRUCTABLE (仅研究单票行为)

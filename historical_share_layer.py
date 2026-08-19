@@ -167,7 +167,13 @@ class HistoricalShareLayer:
     def load_symbol(self, symbol: str, start_date: str = '20000101', end_date: str = '20241231') -> None:
         """从 akshare 加载单只股票的股本事件。"""
         import akshare as ak
-        df = ak.stock_share_change_cninfo(symbol=symbol, start_date=start_date, end_date=end_date)
+        try:
+            df = ak.stock_share_change_cninfo(symbol=symbol, start_date=start_date, end_date=end_date)
+        except Exception as e:
+            print(f'[WARN] {symbol}: akshare 加载失败: {e}', flush=True)
+            self._events[symbol] = []
+            self._loaded_symbols.add(symbol)
+            return
         events = convert_raw_events(df, symbol)
         # 去重：按 source_record_id
         seen: set[str] = set()
