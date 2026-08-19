@@ -122,10 +122,10 @@ def compute_technical_features(klines: pd.DataFrame) -> dict:
     else:
         avg_turnover_20d = None
     
-    # Price Position（250 日分位）
-    if len(closes) >= 250:
-        recent_250 = closes[-250:]
-        price_pos = (closes[-1] - min(recent_250)) / (max(recent_250) - min(recent_250)) * 100
+    # Price Position（500 日分位，与 scan_doubling_potential.py:99 一致）
+    if len(closes) >= 500:
+        recent_500 = closes[-500:]
+        price_pos = (closes[-1] - min(recent_500)) / (max(recent_500) - min(recent_500)) * 100
     else:
         price_pos = None
     

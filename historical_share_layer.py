@@ -284,9 +284,23 @@ class HistoricalMarketCap:
     def __init__(self, share_layer: HistoricalShareLayer) -> None:
         self.share_layer = share_layer
 
-    def get_market_cap(self, symbol: str, as_of_date: date) -> HistoricalMarketCapResult:
-        """查询 as_of_date 的历史总市值（元）。"""
-        share_event = self.share_layer.get_as_of(symbol, as_of_date)
+    def get_market_cap(self, symbol: str, as_of_date: date, *, strict: bool = False) -> HistoricalMarketCapResult:
+        """查询 as_of_date 的历史总市值（元）。
+        
+        Args:
+            strict: 如果 True，仅接受 KNOWN_EFFECTIVE_DATE 股本（STRICT PIT）。
+                    如果 False，接受 KNOWN + APPROXIMATE（RESEARCH）。
+        
+        Returns:
+            HistoricalMarketCapResult with quality:
+            - strict=True, KNOWN → PIT_SAFE
+            - strict=True, APPROXIMATE/UNKNOWN → UNKNOWN
+            - strict=False, KNOWN → PIT_SAFE
+            - strict=False, APPROXIMATE → APPROXIMATE
+            - strict=False, UNKNOWN → UNKNOWN
+        """
+        # 使用 get_any_as_of 获取最近可用事件
+        share_event = self.share_layer.get_any_as_of(symbol, as_of_date)
         if share_event is None:
             return HistoricalMarketCapResult(
                 symbol=symbol,
@@ -318,10 +332,23 @@ class HistoricalMarketCap:
         price_date_str, close = row
         price_date = datetime.strptime(price_date_str, '%Y-%m-%d').date()
         market_cap = share_event.share_count * close
-        quality = MarketCapQuality.PIT_SAFE if share_event.date_quality == ShareDateQuality.KNOWN_EFFECTIVE_DATE else MarketCapQuality.APPROXIMATE
-        limitations = list(share_event.limitation_codes)
-        if quality != MarketCapQuality.PIT_SAFE:
-            limitations.append('SHARE_DATE_APPROXIMATE')
+        
+        if share_event.date_quality == ShareDateQuality.KNOWN_EFFECTIVE_DATE:
+            quality = MarketCapQuality.PIT_SAFE
+            limitations = list(share_event.limitation_codes)
+        elif share_event.date_quality == ShareDateQuality.APPROXIMATE_EFFECTIVE_DATE:
+            if strict:
+                quality = MarketCapQuality.UNKNOWN
+                limitations = ['SHARE_DATE_NOT_KNOWN_EFFECTIVE']
+                market_cap = None  # STRICT 模式下 APPROXIMATE 不可用
+            else:
+                quality = MarketCapQuality.APPROXIMATE
+                limitations = list(share_event.limitation_codes) + ['SHARE_DATE_APPROXIMATE']
+        else:  # UNKNOWN_EFFECTIVE_DATE
+            quality = MarketCapQuality.UNKNOWN
+            limitations = ['SHARE_DATE_UNKNOWN']
+            market_cap = None  # UNKNOWN 日期不可用
+        
         return HistoricalMarketCapResult(
             symbol=symbol,
             as_of_date=as_of_date,
