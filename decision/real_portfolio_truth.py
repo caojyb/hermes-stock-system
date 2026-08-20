@@ -29,6 +29,8 @@ TABLE_ID = "tbluYAy8YJx36jpP"
 # 数据健康等级
 VALID, STALE, PARTIAL, MISSING, UNKNOWN = 'VALID', 'STALE', 'PARTIAL', 'MISSING', 'UNKNOWN'
 FRESH, EXPIRED = 'FRESH', 'EXPIRED'
+READY = 'READY'
+READY_PARTIAL, READY_STALE, READY_EXPIRED, READY_MISSING, READY_UNKNOWN = 'PARTIAL', 'STALE', 'EXPIRED', 'MISSING', 'UNKNOWN'
 
 # A 股最小交易单位
 LOT_SIZE = 100
@@ -251,9 +253,14 @@ def record_asset_snapshot(snap: dict, db_path: Path | None = None) -> str:
             peak_asset REAL,
             peak_asset_date TEXT,
             provenance_json TEXT,
-            created_at TEXT
+            created_at TEXT,
+            freshness TEXT
         )
     ''')
+    try:
+        cur.execute("ALTER TABLE real_asset_snapshots ADD COLUMN freshness TEXT")
+    except Exception:
+        pass
     p = snap.get('portfolio', {})
     prov = snap.get('provenance', {})
     cur.execute('''
@@ -261,13 +268,13 @@ def record_asset_snapshot(snap: dict, db_path: Path | None = None) -> str:
         (snapshot_id, as_of_time, source, data_quality,
          cash, holdings_value, total_asset, position_count,
          drawdown, drawdown_status, peak_asset, peak_asset_date,
-         provenance_json, created_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         provenance_json, created_at, freshness)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ''', (
         snap.get('snapshot_id'), snap.get('as_of_time'), snap.get('source'), snap.get('data_quality'),
         p.get('cash'), p.get('holdings_value'), p.get('total_asset'), p.get('position_count'),
         p.get('drawdown'), p.get('drawdown_status'), p.get('peak_asset'), p.get('peak_asset_date'),
-        json.dumps(prov, ensure_ascii=False, default=str), _now_iso(),
+        json.dumps(prov, ensure_ascii=False, default=str), _now_iso(), snap.get('freshness'),
     ))
     conn.commit()
     conn.close()
@@ -332,6 +339,42 @@ def run_daily_snapshot(holdings: list[dict] | None = None,
     if snap.get('ok'):
         record_asset_snapshot(snap)
     return snap
+
+
+def get_account_readiness(db_path: Path | None = None) -> dict:
+    """
+    读取今日最新账户快照，返回 readiness 状态。
+    READY: cash/total_asset 均有效且 freshness=FRESH
+    PARTIAL: 部分有效但不能完整计算
+    STALE/EXPIRED/MISSING/UNKNOWN: 对应状态
+    """
+    db = Path(db_path) if db_path else _DEFAULT_HISTORY_DB
+    today = _today_iso()
+    if not db.exists():
+        return {'status': 'MISSING', 'reason': 'history_db_missing', 'as_of_time': today, 'snapshot_id': None, 'total_asset': None, 'cash': None, 'freshness': UNKNOWN, 'data_quality': MISSING}
+    con = sqlite3.connect(db)
+    cur = con.cursor()
+    cur.execute('''
+        SELECT snapshot_id, as_of_time, source, data_quality, cash, total_asset, freshness, provenance_json
+        FROM real_asset_snapshots
+        WHERE as_of_time = ?
+        ORDER BY created_at DESC
+        LIMIT 1
+    ''', (today,))
+    row = cur.fetchone()
+    con.close()
+    if not row:
+        return {'status': 'MISSING', 'reason': 'no_snapshot_today', 'as_of_time': today, 'snapshot_id': None, 'total_asset': None, 'cash': None, 'freshness': UNKNOWN, 'data_quality': MISSING}
+    snapshot_id, as_of, source, dq, cash, total_asset, freshness, prov_json = row
+    if dq == MISSING or cash is None or total_asset is None:
+        return {'status': 'PARTIAL', 'reason': 'missing_cash_or_total_asset', 'as_of_time': as_of, 'snapshot_id': snapshot_id, 'total_asset': total_asset, 'cash': cash, 'freshness': freshness, 'data_quality': dq}
+    if freshness == EXPIRED:
+        return {'status': 'EXPIRED', 'reason': 'snapshot_expired', 'as_of_time': as_of, 'snapshot_id': snapshot_id, 'total_asset': total_asset, 'cash': cash, 'freshness': freshness, 'data_quality': dq}
+    if freshness == STALE or dq == STALE:
+        return {'status': 'STALE', 'reason': 'snapshot_stale', 'as_of_time': as_of, 'snapshot_id': snapshot_id, 'total_asset': total_asset, 'cash': cash, 'freshness': freshness, 'data_quality': dq}
+    if freshness == UNKNOWN:
+        return {'status': 'UNKNOWN', 'reason': 'freshness_unknown', 'as_of_time': as_of, 'snapshot_id': snapshot_id, 'total_asset': total_asset, 'cash': cash, 'freshness': freshness, 'data_quality': dq}
+    return {'status': READY, 'reason': 'ok', 'as_of_time': as_of, 'snapshot_id': snapshot_id, 'total_asset': total_asset, 'cash': cash, 'freshness': freshness, 'data_quality': dq}
 
 
 if __name__ == '__main__':

@@ -22,7 +22,7 @@ sys.path.insert(0, '/home/caojy/.hermes/skills/stock/stock-expert')
 sys.path.insert(0, str(SCRIPT_DIR.parent.parent / 'skills/stock/stock-expert'))
 from decision.contract import Decision
 from decision import snapshot as snap
-from decision.real_portfolio_truth import build_real_snapshot, snapshot_portfolio_context
+from decision.real_portfolio_truth import build_real_snapshot, snapshot_portfolio_context, get_account_readiness, VALID, STALE, PARTIAL, MISSING, UNKNOWN, FRESH, EXPIRED, READY
 from decision.real_sizing import compute_real_position_sizing, check_sizing_for_action, BUY, SELL, HOLD, REDUCE, ADD, NO_TRADE, READY, BLOCKED
 from stock_strategy_config import get_market_env_scale
 from stock_db_paths import get_db_path
@@ -80,12 +80,15 @@ def load_today_sim_trades(today: str | None = None, sim_db: str | None = None) -
     return out
 
 
-def classify_actions(snapshots: list[dict], sim_trades: list[dict]) -> dict:
+def classify_actions(snapshots: list[dict], sim_trades: list[dict], readiness: dict | None = None) -> dict:
+    readiness = readiness or {}
+    sizing_allowed = bool(readiness.get('sizing_allowed'))
+    blocked_reason = readiness.get('blocked_reason')
     actions = defaultdict(list)
     sim_map = {t['decision_id']: t for t in sim_trades if t.get('decision_id')}
 
     for d in snapshots:
-        action = d.get('action', 'NO_TRADE')
+        raw_action = d.get('action', 'NO_TRADE')
         entry = d.get('entry', {}) or {}
         portfolio = d.get('portfolio', {}) or {}
         risk = d.get('risk', {}) or {}
@@ -96,7 +99,7 @@ def classify_actions(snapshots: list[dict], sim_trades: list[dict]) -> dict:
             'name': d.get('name'),
             'strategy': d.get('strategy'),
             'timestamp': d.get('timestamp'),
-            'action': action,
+            'action': raw_action,
             'reason_codes': d.get('reason_codes', []) or [],
             'explanation': d.get('explanation', ''),
             'regime': d.get('regime_label'),
@@ -121,20 +124,21 @@ def classify_actions(snapshots: list[dict], sim_trades: list[dict]) -> dict:
         }
 
         # sizing（仅对 BUY/ADD/SELL/REDUCE 计算）
-        if action in (BUY, ADD, SELL, REDUCE):
+        if raw_action in (BUY, ADD, SELL, REDUCE):
             ref_price = entry.get('entry_price') or entry.get('reference_price')
             total_asset = portfolio.get('total_asset')
             current_mv = portfolio.get('current_position_value') or portfolio.get('current_position')
             cash = portfolio.get('cash')
             target_pct = None
-            if action == BUY:
+            if raw_action == BUY:
                 target_pct = entry.get('target_position_pct') or 0.025
-            elif action == SELL:
+            elif raw_action == SELL:
                 target_pct = 0.0
-            elif action == REDUCE:
+            elif raw_action == REDUCE:
                 target_pct = entry.get('target_position_pct') or 0.0
 
-            if total_asset is not None and ref_price:
+            computed = False
+            if total_asset is not None and ref_price and sizing_allowed:
                 try:
                     sz = compute_real_position_sizing(
                         total_asset=float(total_asset),
@@ -148,14 +152,24 @@ def classify_actions(snapshots: list[dict], sim_trades: list[dict]) -> dict:
                     item['delta_value'] = sz.get('delta_value')
                     item['delta_quantity'] = sz.get('delta_quantity')
                     item['sizing_status'] = sz.get('sizing_status', 'READY')
+                    computed = True
                 except Exception:
                     item['sizing_status'] = 'PARTIAL'
             else:
-                item['sizing_status'] = 'BLOCKED' if action in (BUY, ADD) else 'PARTIAL'
+                item['sizing_status'] = 'BLOCKED' if raw_action in (BUY, ADD) else 'PARTIAL'
                 if total_asset is None:
                     item['target_value'] = None
                     item['target_quantity'] = None
 
+            if not computed and raw_action in (BUY, ADD) and not sizing_allowed:
+                item['action'] = NO_TRADE
+                item['reason_codes'] = sorted(set((item.get('reason_codes') or []) + [blocked_reason or 'REAL_TOTAL_ASSET_UNKNOWN']))
+                item['explanation'] = '; '.join(item['reason_codes'])
+                item['sizing_status'] = 'BLOCKED'
+                item['target_value'] = None
+                item['target_quantity'] = None
+
+        action = item['action']
         if action in (BUY, ADD, HOLD, REDUCE, SELL, NO_TRADE):
             actions[action].append(item)
         else:
@@ -186,6 +200,34 @@ def build_real_portfolio_section() -> dict:
         'peak_asset_date': p.get('peak_asset_date'),
         'sector_exposure': p.get('sector_exposure', {}),
         'provenance': snap.get('provenance', {}),
+    }
+
+
+def build_account_readiness_section() -> dict:
+    try:
+        r = get_account_readiness()
+    except Exception:
+        r = {'status': UNKNOWN, 'reason': 'readiness_check_failed', 'total_asset': None, 'cash': None, 'freshness': UNKNOWN}
+    blocked_reason = None
+    if r.get('status') in (MISSING, PARTIAL, STALE, EXPIRED, UNKNOWN):
+        blocked_reason = {
+            'MISSING': 'REAL_TOTAL_ASSET_MISSING',
+            'PARTIAL': 'REAL_TOTAL_ASSET_UNKNOWN',
+            'STALE': 'REAL_TOTAL_ASSET_STALE',
+            'EXPIRED': 'REAL_TOTAL_ASSET_EXPIRED',
+            'UNKNOWN': 'REAL_TOTAL_ASSET_UNKNOWN',
+        }.get(r.get('status'), 'REAL_TOTAL_ASSET_UNKNOWN')
+    return {
+        'status': r.get('status'),
+        'reason': r.get('reason'),
+        'blocked_reason': blocked_reason,
+        'snapshot_id': r.get('snapshot_id'),
+        'as_of_time': r.get('as_of_time'),
+        'total_asset': r.get('total_asset'),
+        'cash': r.get('cash'),
+        'freshness': r.get('freshness'),
+        'data_quality': r.get('data_quality'),
+        'sizing_allowed': r.get('status') == READY,
     }
 
 
@@ -244,7 +286,8 @@ def build_daily_report(today: str | None = None) -> dict:
     today = today or _today_str()
     snapshots = load_today_snapshots(today)
     sim_trades = load_today_sim_trades(today)
-    actions = classify_actions(snapshots, sim_trades)
+    readiness = build_account_readiness_section()
+    actions = classify_actions(snapshots, sim_trades, readiness)
 
     report = {
         'meta': {
@@ -253,6 +296,7 @@ def build_daily_report(today: str | None = None) -> dict:
             'contract_version': 'phase7.6',
             'primary_output': True,
         },
+        'account_readiness': readiness,
         'market': build_market_section(),
         'data_health': build_data_health_section(),
         'real_portfolio': build_real_portfolio_section(),
