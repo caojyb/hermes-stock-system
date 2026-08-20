@@ -54,3 +54,13 @@ def isolate_snapshots(tmp_path, monkeypatch):
     monkeypatch.setattr(ddc, 'SNAP_DIR', str(snap_dir))
     monkeypatch.setattr(snapshot_mod, 'SNAP_DIR', str(snap_dir))
     yield snap_dir
+
+
+FIXED_DATE = '2026-08-20'
+
+
+@pytest.fixture()
+def fix_today(monkeypatch):
+    """将 real_portfolio_truth._today_iso 固定为 FIXED_DATE，避免测试依赖真实日期。"""
+    monkeypatch.setattr(real_portfolio_truth, '_today_iso', lambda: FIXED_DATE)
+    yield FIXED_DATE

@@ -9,7 +9,7 @@ Phase 8-A.1 — Daily Decision Contract 测试（隔离版 20 项）
 """
 import os, sys, json, sqlite3, tempfile, inspect, glob
 from pathlib import Path
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
@@ -40,7 +40,7 @@ def _isolate_daily_contract_state():
     _rpt._DEFAULT_HISTORY_DB = db_path
     from decision.real_portfolio_truth import build_real_snapshot, record_asset_snapshot
     snap = build_real_snapshot(holdings=[], cash=50000.0, total_asset=100000.0, source='MANUAL_CONFIRMATION')
-    snap['as_of_time'] = FIXED_DATE
+    snap['as_of_time'] = date.today().isoformat()
     snap['freshness'] = 'FRESH'
     snap['data_quality'] = 'VALID'
     record_asset_snapshot(snap, db_path=db_path)
