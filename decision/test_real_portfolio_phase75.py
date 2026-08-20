@@ -126,9 +126,11 @@ def test_05_real_drawdown_calculation():
 
 
 # ═══ 6. drawdown unknown ═══
-def test_06_drawdown_unknown_without_history():
-    if _DEFAULT_HISTORY_DB.exists():
-        _DEFAULT_HISTORY_DB.unlink()
+def test_06_drawdown_unknown_without_history(tmp_path, monkeypatch):
+    import decision.real_portfolio_truth as _rpt
+    db = tmp_path / 'nonexistent_history.db'
+    monkeypatch.setattr(_rpt, '_DEFAULT_HISTORY_DB', db)
+    assert not db.exists()
     s = build_real_snapshot(holdings=HOLDINGS)
     assert s['portfolio']['drawdown'] is None
     assert s['portfolio']['drawdown_status'] == UNKNOWN

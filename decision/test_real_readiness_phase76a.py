@@ -16,10 +16,11 @@ sys.path.insert(0, '/home/caojy/.hermes/skills/stock/stock-expert')
 
 import pytest
 
+import decision.real_portfolio_truth as real_portfolio_truth
+import decision.snapshot as snapshot_mod
 from decision.real_portfolio_truth import (
     build_real_snapshot, record_asset_snapshot, get_account_readiness,
     READY, PARTIAL, STALE, EXPIRED, MISSING, UNKNOWN,
-    _DEFAULT_HISTORY_DB,
 )
 from decision.daily_decision_contract import (
     build_daily_report, format_human_readable, classify_actions,
@@ -33,12 +34,12 @@ FIXED_DATE = '2026-08-20'
 
 
 def _clean_history():
-    if _DEFAULT_HISTORY_DB.exists():
-        _DEFAULT_HISTORY_DB.unlink()
+    if hasattr(real_portfolio_truth, "_DEFAULT_HISTORY_DB") and real_portfolio_truth._DEFAULT_HISTORY_DB.exists():
+        real_portfolio_truth._DEFAULT_HISTORY_DB.unlink()
 
 
 def _clean_snapshots():
-    for fp in glob.glob(os.path.join(SNAP_DIR, '*.json')):
+    for fp in glob.glob(os.path.join(snapshot_mod.SNAP_DIR, '*.json')):
         os.remove(fp)
 
 
@@ -62,8 +63,8 @@ def _inject_snapshot(action, symbol='600001', name='A', reason_codes=None, decis
         'risk': {'stop_loss': 0.08, 'take_profit': [0.25, 0.5, 0.8]},
         'portfolio': {'total_asset': None, 'cash': None, 'current_position': 0.0},
     }
-    path = os.path.join(SNAP_DIR, f"{decision_id}.json")
-    os.makedirs(SNAP_DIR, exist_ok=True)
+    path = os.path.join(snapshot_mod.SNAP_DIR, f"{decision_id}.json")
+    os.makedirs(snapshot_mod.SNAP_DIR, exist_ok=True)
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(snap_data, f, ensure_ascii=False)
     return decision_id
@@ -105,7 +106,7 @@ def _record_account_snapshot(cash, total_asset, as_of=FIXED_DATE, source='MANUAL
 
 
 # ═══ 1. manual account snapshot creation ═══
-def test_01_manual_account_snapshot_creation():
+def test_01_manual_account_snapshot_creation(isolate_history_db):
     _clean_history()
     sid = _record_account_snapshot(cash=50000.0, total_asset=100000.0)
     assert sid == f"real_{FIXED_DATE.replace('-','')}_manual"
@@ -116,7 +117,7 @@ def test_01_manual_account_snapshot_creation():
 
 
 # ═══ 2. snapshot provenance ═══
-def test_02_snapshot_provenance():
+def test_02_snapshot_provenance(isolate_history_db):
     _clean_history()
     _record_account_snapshot(cash=50000.0, total_asset=100000.0)
     r = get_account_readiness()
@@ -125,7 +126,7 @@ def test_02_snapshot_provenance():
 
 
 # ═══ 3. READY account ═══
-def test_03_ready_account():
+def test_03_ready_account(isolate_history_db):
     _clean_history()
     _record_account_snapshot(cash=50000.0, total_asset=100000.0)
     r = get_account_readiness()
@@ -134,13 +135,13 @@ def test_03_ready_account():
 
 
 # ═══ 4. MISSING account ═══
-def test_04_missing_account():
+def test_04_missing_account(isolate_history_db):
     _clean_history()
     r = get_account_readiness()
     assert r['status'] == 'MISSING'
     assert r['reason'] == 'history_db_missing'
     # DB exists but no snapshot today
-    db = sqlite3.connect(_DEFAULT_HISTORY_DB)
+    db = sqlite3.connect(real_portfolio_truth._DEFAULT_HISTORY_DB)
     cur = db.cursor()
     cur.execute('''
         CREATE TABLE IF NOT EXISTS real_asset_snapshots (
@@ -171,7 +172,7 @@ def test_04_missing_account():
 
 
 # ═══ 5. PARTIAL account ═══
-def test_05_partial_account():
+def test_05_partial_account(isolate_history_db):
     _clean_history()
     _record_account_snapshot(cash=None, total_asset=None, data_quality='PARTIAL')
     r = get_account_readiness()
@@ -179,7 +180,7 @@ def test_05_partial_account():
 
 
 # ═══ 6. STALE account ═══
-def test_06_stale_account():
+def test_06_stale_account(isolate_history_db):
     _clean_history()
     _record_account_snapshot(cash=50000.0, total_asset=100000.0, freshness='STALE')
     r = get_account_readiness()
@@ -187,7 +188,7 @@ def test_06_stale_account():
 
 
 # ═══ 7. UNKNOWN account ═══
-def test_07_unknown_account():
+def test_07_unknown_account(isolate_history_db):
     _clean_history()
     _record_account_snapshot(cash=50000.0, total_asset=100000.0, freshness='UNKNOWN')
     r = get_account_readiness()
@@ -225,7 +226,7 @@ def test_11_delta_calculation():
 
 
 # ═══ 12. real/simulation isolation ═══
-def test_12_real_simulation_isolation():
+def test_12_real_simulation_isolation(isolate_history_db):
     _clean_history()
     r = get_account_readiness()
     js = json.dumps(r, ensure_ascii=False).lower()
@@ -233,7 +234,7 @@ def test_12_real_simulation_isolation():
 
 
 # ═══ 13. BUY blocked when account unavailable ═══
-def test_13_buy_blocked_when_account_unavailable():
+def test_13_buy_blocked_when_account_unavailable(isolate_history_db, isolate_snapshots):
     _clean_history()
     _clean_snapshots()
     _record_account_snapshot(cash=None, total_asset=None, data_quality='PARTIAL')
@@ -246,7 +247,7 @@ def test_13_buy_blocked_when_account_unavailable():
 
 
 # ═══ 14. SELL allowed when account unavailable ═══
-def test_14_sell_allowed_when_account_unavailable():
+def test_14_sell_allowed_when_account_unavailable(isolate_history_db, isolate_snapshots):
     _clean_history()
     _clean_snapshots()
     _record_account_snapshot(cash=None, total_asset=None, data_quality='PARTIAL')
@@ -257,7 +258,7 @@ def test_14_sell_allowed_when_account_unavailable():
 
 
 # ═══ 15. ADD blocked when account unavailable ═══
-def test_15_add_blocked_when_account_unavailable():
+def test_15_add_blocked_when_account_unavailable(isolate_history_db, isolate_snapshots):
     _clean_history()
     _clean_snapshots()
     _record_account_snapshot(cash=None, total_asset=None, data_quality='PARTIAL')
@@ -270,7 +271,7 @@ def test_15_add_blocked_when_account_unavailable():
 
 
 # ═══ 16. daily readiness ═══
-def test_16_daily_readiness():
+def test_16_daily_readiness(isolate_history_db):
     _clean_history()
     _record_account_snapshot(cash=50000.0, total_asset=100000.0)
     r = build_account_readiness_section()
@@ -279,7 +280,7 @@ def test_16_daily_readiness():
 
 
 # ═══ 17. report consistency ═══
-def test_17_report_consistency():
+def test_17_report_consistency(isolate_history_db):
     _clean_history()
     _record_account_snapshot(cash=50000.0, total_asset=100000.0)
     report = build_daily_report(today=FIXED_DATE)
@@ -288,7 +289,7 @@ def test_17_report_consistency():
 
 
 # ═══ 18. no BUY + sizing BLOCKED contradiction ═══
-def test_18_no_buy_sizing_blocked_contradiction():
+def test_18_no_buy_sizing_blocked_contradiction(isolate_history_db, isolate_snapshots):
     _clean_history()
     _clean_snapshots()
     _record_account_snapshot(cash=None, total_asset=None, data_quality='PARTIAL')
@@ -308,7 +309,7 @@ def test_19_deterministic_sizing():
 
 
 # ═══ 20. snapshot replay ═══
-def test_20_snapshot_replay():
+def test_20_snapshot_replay(isolate_history_db):
     _clean_history()
     sid = _record_account_snapshot(cash=50000.0, total_asset=100000.0)
     r = get_account_readiness()

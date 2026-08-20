@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Phase 7.6 — Daily Decision Contract 测试（20 项）
+Phase 8-A.1 — Daily Decision Contract 测试（隔离版 20 项）
 
-运行：
-  cd /home/caojy/.hermes/scripts/cron && python3 -m pytest decision/test_daily_contract.py -v
+关键变更：
+- 每个 test 使用独立临时 SNAP_DIR，避免与 test_real_readiness_phase76a 共享目录
+- 通过 monkeypatch 覆盖 decision.daily_decision_contract.SNAP_DIR
 """
 import os, sys, json, sqlite3, tempfile, inspect, glob
 from pathlib import Path
@@ -22,22 +23,40 @@ from decision.daily_decision_contract import (
     build_market_section, build_data_health_section, build_real_portfolio_section,
     build_decision_summary,
     BUY, SELL, HOLD, REDUCE, ADD, NO_TRADE,
-    SNAP_DIR,
 )
 from decision.engine import DecisionEngine
 from decision.adapters import entry_ctx, position_ctx
-from decision import snapshot as snap
 
 ENG = DecisionEngine(strategy='v1_double', config_version='test', code_version='p76')
 FIXED_DATE = '2026-08-20'
 
 
-def _clean_snapshots():
-    for fp in glob.glob(os.path.join(SNAP_DIR, '*.json')):
-        os.remove(fp)
+@pytest.fixture(scope="function", autouse=True)
+def _isolate_daily_contract_state():
+    # 1) 给当前 test 一个独立的、默认 READY 的真实账户历史 DB
+    tmp = tempfile.mkdtemp(prefix='daily_contract_history_')
+    db_path = Path(tmp) / 'real_portfolio_history.db'
+    import decision.real_portfolio_truth as _rpt
+    _rpt._DEFAULT_HISTORY_DB = db_path
+    from decision.real_portfolio_truth import build_real_snapshot, record_asset_snapshot
+    snap = build_real_snapshot(holdings=[], cash=50000.0, total_asset=100000.0, source='MANUAL_CONFIRMATION')
+    snap['as_of_time'] = FIXED_DATE
+    snap['freshness'] = 'FRESH'
+    snap['data_quality'] = 'VALID'
+    record_asset_snapshot(snap, db_path=db_path)
+    # 2) snapshot 目录隔离
+    snap_dir = tempfile.mkdtemp(prefix='daily_contract_snap_')
+    import decision.daily_decision_contract as _ddc
+    _ddc.SNAP_DIR = snap_dir
+    yield
+    # teardown: temp dirs auto-cleaned
 
 
-def _inject_snapshot(action, symbol='600001', name='A', reason_codes=None, decision_id=None):
+def _make_snap_dir():
+    return tempfile.mkdtemp(prefix='daily_contract_snap_')
+
+
+def _inject_snapshot(snap_dir, action, symbol='600001', name='A', reason_codes=None, decision_id=None):
     decision_id = decision_id or f"test_{datetime.now().timestamp()}"
     ts = f"{FIXED_DATE}T00:00:00"
     snap_data = {
@@ -57,15 +76,14 @@ def _inject_snapshot(action, symbol='600001', name='A', reason_codes=None, decis
         'risk': {'stop_loss': 0.08, 'take_profit': [0.25, 0.5, 0.8]},
         'portfolio': {'total_asset': None, 'cash': None, 'current_position': 0.0},
     }
-    path = os.path.join(SNAP_DIR, f"{decision_id}.json")
-    os.makedirs(SNAP_DIR, exist_ok=True)
+    path = os.path.join(snap_dir, f"{decision_id}.json")
+    os.makedirs(snap_dir, exist_ok=True)
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(snap_data, f, ensure_ascii=False)
     return decision_id
 
 
 def _write_sim_trade(decision_id, code='600001', name='A', buy_date=FIXED_DATE, sell_date=None):
-    import tempfile
     db = Path(tempfile.mkdtemp()) / 'test_sim.db'
     con = sqlite3.connect(db)
     cur = con.cursor()
@@ -90,7 +108,9 @@ def _write_sim_trade(decision_id, code='600001', name='A', buy_date=FIXED_DATE, 
 
 
 # ═══ 1. daily decision contract ═══
-def test_01_daily_decision_contract():
+def test_01_daily_decision_contract(monkeypatch):
+    snap_dir = _make_snap_dir()
+    monkeypatch.setattr('decision.daily_decision_contract.SNAP_DIR', snap_dir)
     report = build_daily_report(today=FIXED_DATE)
     assert report['meta']['contract_version'] == 'phase7.6'
     assert 'market' in report
@@ -100,9 +120,10 @@ def test_01_daily_decision_contract():
 
 
 # ═══ 2. BUY output ═══
-def test_02_buy_output():
-    _clean_snapshots()
-    decision_id = _inject_snapshot(BUY, reason_codes=['CANDIDATE_QUALIFIED', 'ENTRY_CONFIRMED'])
+def test_02_buy_output(monkeypatch):
+    snap_dir = _make_snap_dir()
+    monkeypatch.setattr('decision.daily_decision_contract.SNAP_DIR', snap_dir)
+    decision_id = _inject_snapshot(snap_dir, BUY, reason_codes=['CANDIDATE_QUALIFIED', 'ENTRY_CONFIRMED'])
     report = build_daily_report(today=FIXED_DATE)
     buys = report['actions'].get('BUY', [])
     assert len(buys) >= 1
@@ -114,9 +135,10 @@ def test_02_buy_output():
 
 
 # ═══ 3. NO_TRADE output ═══
-def test_03_no_trade_output():
-    _clean_snapshots()
-    _inject_snapshot(NO_TRADE, reason_codes=['PORTFOLIO_MAX_POSITION'])
+def test_03_no_trade_output(monkeypatch):
+    snap_dir = _make_snap_dir()
+    monkeypatch.setattr('decision.daily_decision_contract.SNAP_DIR', snap_dir)
+    _inject_snapshot(snap_dir, NO_TRADE, reason_codes=['PORTFOLIO_MAX_POSITION'])
     report = build_daily_report(today=FIXED_DATE)
     nts = report['actions'].get('NO_TRADE', [])
     assert len(nts) >= 1
@@ -127,9 +149,10 @@ def test_03_no_trade_output():
 
 
 # ═══ 4. SELL output ═══
-def test_04_sell_output():
-    _clean_snapshots()
-    decision_id = _inject_snapshot(SELL, reason_codes=['FIXED_STOP_LOSS'])
+def test_04_sell_output(monkeypatch):
+    snap_dir = _make_snap_dir()
+    monkeypatch.setattr('decision.daily_decision_contract.SNAP_DIR', snap_dir)
+    decision_id = _inject_snapshot(snap_dir, SELL, reason_codes=['FIXED_STOP_LOSS'])
     _write_sim_trade(decision_id, sell_date=FIXED_DATE)
     report = build_daily_report(today=FIXED_DATE)
     sells = report['actions'].get('SELL', [])
@@ -141,9 +164,10 @@ def test_04_sell_output():
 
 
 # ═══ 5. REDUCE output ═══
-def test_05_reduce_output():
-    _clean_snapshots()
-    _inject_snapshot(REDUCE, reason_codes=['DRAWDOWN_BLOCKED'])
+def test_05_reduce_output(monkeypatch):
+    snap_dir = _make_snap_dir()
+    monkeypatch.setattr('decision.daily_decision_contract.SNAP_DIR', snap_dir)
+    _inject_snapshot(snap_dir, REDUCE, reason_codes=['DRAWDOWN_BLOCKED'])
     report = build_daily_report(today=FIXED_DATE)
     reds = report['actions'].get('REDUCE', [])
     assert len(reds) >= 1
@@ -153,9 +177,10 @@ def test_05_reduce_output():
 
 
 # ═══ 6. HOLD output ═══
-def test_06_hold_output():
-    _clean_snapshots()
-    _inject_snapshot(HOLD, reason_codes=['NO_SIGNAL'])
+def test_06_hold_output(monkeypatch):
+    snap_dir = _make_snap_dir()
+    monkeypatch.setattr('decision.daily_decision_contract.SNAP_DIR', snap_dir)
+    _inject_snapshot(snap_dir, HOLD, reason_codes=['NO_SIGNAL'])
     report = build_daily_report(today=FIXED_DATE)
     holds = report['actions'].get('HOLD', [])
     assert len(holds) >= 1
@@ -164,9 +189,10 @@ def test_06_hold_output():
 
 
 # ═══ 7. ADD output ═══
-def test_07_add_output():
-    _clean_snapshots()
-    _inject_snapshot(ADD, reason_codes=['ADD_POSITION_ALLOWED'])
+def test_07_add_output(monkeypatch):
+    snap_dir = _make_snap_dir()
+    monkeypatch.setattr('decision.daily_decision_contract.SNAP_DIR', snap_dir)
+    _inject_snapshot(snap_dir, ADD, reason_codes=['ADD_POSITION_ALLOWED'])
     report = build_daily_report(today=FIXED_DATE)
     adds = report['actions'].get('ADD', [])
     assert len(adds) >= 1
@@ -175,9 +201,10 @@ def test_07_add_output():
 
 
 # ═══ 8. BUY sizing output ═══
-def test_08_buy_sizing_output():
-    _clean_snapshots()
-    decision_id = _inject_snapshot(BUY)
+def test_08_buy_sizing_output(monkeypatch):
+    snap_dir = _make_snap_dir()
+    monkeypatch.setattr('decision.daily_decision_contract.SNAP_DIR', snap_dir)
+    decision_id = _inject_snapshot(snap_dir, BUY)
     report = build_daily_report(today=FIXED_DATE)
     buys = report['actions'].get('BUY', [])
     b = next((x for x in buys if x.get('decision_id') == decision_id), None)
@@ -212,9 +239,10 @@ def test_11_data_gap_output():
 
 
 # ═══ 12. reason code output ═══
-def test_12_reason_code_output():
-    _clean_snapshots()
-    _inject_snapshot(BUY, reason_codes=['CANDIDATE_QUALIFIED', 'ENTRY_CONFIRMED'])
+def test_12_reason_code_output(monkeypatch):
+    snap_dir = _make_snap_dir()
+    monkeypatch.setattr('decision.daily_decision_contract.SNAP_DIR', snap_dir)
+    _inject_snapshot(snap_dir, BUY, reason_codes=['CANDIDATE_QUALIFIED', 'ENTRY_CONFIRMED'])
     report = build_daily_report(today=FIXED_DATE)
     all_items = []
     for items in report['actions'].values():
@@ -223,18 +251,20 @@ def test_12_reason_code_output():
 
 
 # ═══ 13. decision_id output ═══
-def test_13_decision_id_output():
-    _clean_snapshots()
-    decision_id = _inject_snapshot(BUY)
+def test_13_decision_id_output(monkeypatch):
+    snap_dir = _make_snap_dir()
+    monkeypatch.setattr('decision.daily_decision_contract.SNAP_DIR', snap_dir)
+    decision_id = _inject_snapshot(snap_dir, BUY)
     report = build_daily_report(today=FIXED_DATE)
     trace = report['decision_summary']['trace']
     assert decision_id in trace
 
 
 # ═══ 14. replay link ═══
-def test_14_replay_link():
-    _clean_snapshots()
-    decision_id = _inject_snapshot(BUY)
+def test_14_replay_link(monkeypatch):
+    snap_dir = _make_snap_dir()
+    monkeypatch.setattr('decision.daily_decision_contract.SNAP_DIR', snap_dir)
+    decision_id = _inject_snapshot(snap_dir, BUY)
     report = build_daily_report(today=FIXED_DATE)
     buys = report['actions'].get('BUY', [])
     b = next((x for x in buys if x.get('decision_id') == decision_id), None)
@@ -243,9 +273,10 @@ def test_14_replay_link():
 
 
 # ═══ 15. candidate vs final decision ═══
-def test_15_candidate_vs_final_decision():
-    _clean_snapshots()
-    _inject_snapshot(NO_TRADE, reason_codes=['PORTFOLIO_MAX_POSITION'])
+def test_15_candidate_vs_final_decision(monkeypatch):
+    snap_dir = _make_snap_dir()
+    monkeypatch.setattr('decision.daily_decision_contract.SNAP_DIR', snap_dir)
+    _inject_snapshot(snap_dir, NO_TRADE, reason_codes=['PORTFOLIO_MAX_POSITION'])
     report = build_daily_report(today=FIXED_DATE)
     nts = report['actions'].get('NO_TRADE', [])
     assert any('PORTFOLIO_MAX_POSITION' in (x.get('reason_codes') or []) for x in nts)
@@ -259,10 +290,11 @@ def test_16_no_second_decision_owner():
 
 
 # ═══ 17. daily summary ═══
-def test_17_daily_summary():
-    _clean_snapshots()
-    _inject_snapshot(BUY, reason_codes=['CANDIDATE_QUALIFIED'])
-    _inject_snapshot(SELL, reason_codes=['FIXED_STOP_LOSS'])
+def test_17_daily_summary(monkeypatch):
+    snap_dir = _make_snap_dir()
+    monkeypatch.setattr('decision.daily_decision_contract.SNAP_DIR', snap_dir)
+    _inject_snapshot(snap_dir, BUY, reason_codes=['CANDIDATE_QUALIFIED'])
+    _inject_snapshot(snap_dir, SELL, reason_codes=['FIXED_STOP_LOSS'])
     report = build_daily_report(today=FIXED_DATE)
     summary = report['decision_summary']
     assert summary['buy_count'] >= 1
@@ -276,9 +308,10 @@ def test_18_real_simulation_isolation():
 
 
 # ═══ 19. decision completeness ═══
-def test_19_decision_completeness():
-    _clean_snapshots()
-    decision_id = _inject_snapshot(BUY)
+def test_19_decision_completeness(monkeypatch):
+    snap_dir = _make_snap_dir()
+    monkeypatch.setattr('decision.daily_decision_contract.SNAP_DIR', snap_dir)
+    decision_id = _inject_snapshot(snap_dir, BUY)
     report = build_daily_report(today=FIXED_DATE)
     buys = report['actions'].get('BUY', [])
     b = next((x for x in buys if x.get('decision_id') == decision_id), None)
