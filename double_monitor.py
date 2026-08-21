@@ -230,16 +230,34 @@ today = date.today()
 lookback = (today - timedelta(days=400)).isoformat()
 today_str = today.isoformat()
 
-# ── 交易日防护：若今天无 K 线数据（非交易日，如周末/节假日/休市），
-#    跳过信号扫描与买入，只保留持仓监控与摘要，避免产生虚假"今日买入信号" ──
+# ── 交易日/数据就绪语义分离（Phase 8-G0 / CALENDAR_INFRA_FIX）──
+# 修复：不再用"有无当日K线"反推交易日（会把"行情未刷新"误判为"非交易日"）。
+# 现在区分：TRADING_DAY（日历工作日）与 MARKET_DATA_READY（当日K线是否刷新）。
 try:
-    cur.execute("SELECT COUNT(*) FROM klines WHERE date=?", (today_str,))
-    today_kline_count = cur.fetchone()[0]
-except Exception:
-    today_kline_count = 0
-IS_TRADING_DAY = today_kline_count > 0
-if not IS_TRADING_DAY:
-    print(f"  ⚠️ 今日 {today_str} 非交易日（无当日 K 线），跳过买入信号扫描，仅监控持仓与出摘要")
+    from trading_calendar import classify_trading_day, is_buy_eligible
+    try:
+        cur.execute("SELECT COUNT(*) FROM klines WHERE date=?", (today_str,))
+        today_kline_count = cur.fetchone()[0]
+        cur.execute("SELECT MAX(date) FROM klines")
+        latest_kline_row = cur.fetchone()
+        latest_kline_date = latest_kline_row[0] if latest_kline_row else None
+    except Exception:
+        today_kline_count = 0
+        latest_kline_date = None
+    _cal = classify_trading_day(today, today_kline_count, latest_kline_date)
+    IS_TRADING_DAY = is_buy_eligible(today, today_kline_count)
+    if not IS_TRADING_DAY:
+        print(f"  ⚠️ {_cal['message']}")
+except Exception as e:
+    # 兜底：保持原行为（当天有K线才算交易日），不因日历模块故障改变买入行为
+    try:
+        cur.execute("SELECT COUNT(*) FROM klines WHERE date=?", (today_str,))
+        today_kline_count = cur.fetchone()[0]
+    except Exception:
+        today_kline_count = 0
+    IS_TRADING_DAY = today_kline_count > 0
+    if not IS_TRADING_DAY:
+        print(f"  ⚠️ 今日 {today_str} 非交易日（无当日 K 线），跳过买入信号扫描，仅监控持仓与出摘要")
 
 # 价格异常连续计数（用于连续 3 周期告警）
 price_anomaly_counter: dict[str, dict] = {}
