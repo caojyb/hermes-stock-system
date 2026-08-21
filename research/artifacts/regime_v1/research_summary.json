@@ -1,0 +1,54 @@
+{
+  "research_version": "phase-8g1-v1",
+  "source": "RESEARCH",
+  "exploratory_research": true,
+  "research_health": "RESEARCH_PARTIAL",
+  "research_health_detail": {
+    "production_semantics": "CONFIRMED",
+    "cadence": "CONFIRMED_WEEKLY",
+    "candidate_timing": "CONFIRMED_SUNDAY_1720",
+    "entry_timing": "CONFIRMED_T_PLUS_1_OPEN",
+    "feature": "PIT",
+    "regime": "PIT_WITH_INDEX_GAP",
+    "market_cap": "PIT_APPROXIMATE",
+    "ST": "UNKNOWN_NO_HISTORY",
+    "universe": "AS_OF_AVAILABLE",
+    "survivorship": "LIMITED",
+    "forward_outcome": "PIT_T_PLUS_1_OPEN",
+    "baseline": "ALL_REGIMES_COMPUTED",
+    "stability": "NOT_FORMALLY_DEFINED"
+  },
+  "conclusion_label": "PRELIMINARY_PATTERN",
+  "conclusion_reason": "Stability Gate 未预先正式定义；Regime×V1 存在初步差异信号但样本/稳定性不足",
+  "regime_definition": {
+    "authority": "market_env_classifier.py",
+    "weights": {"trend": 0.30, "volatility": 0.25, "liquidity": 0.25, "style": 0.20},
+    "indexes": ["000300", "000905"],
+    "states": ["HIGH_VOLATILITY", "STRONG_TREND", "LOW_VOLUME", "SIDEWAYS"]
+  },
+  "v1_production_filters": {
+    "cadence": "weekly_sunday_1720",
+    "market_cap": "5_90B",
+    "volume_ratio": ">=2.7",
+    "amount_1d": ">=8000wan",
+    "amount_20d": ">=4000wan",
+    "atr_pct": ">=3",
+    "price_position": "<=40pct_500d",
+    "ST": "excluded_no_history"
+  },
+  "key_findings": {
+    "volume_ratio_is_scarce": "量比>=2.7 历史中位~0.92，极稀缺，是 V1 候选全市场 PASS 率低的主因",
+    "market_cap_pit": "历史市值可 PIT-APPROXIMATE 重建（akshare 股本事件+收盘价）",
+    "regime_pit": "历史 Regime 可 PIT 重建（000300/000905 指数 2004 起完整），000300 2026-07 后缺口",
+    "st_unavailable": "无历史 ST，全部 UNKNOWN，不计 PASS",
+    "candidate_scarcity": "V1 硬过滤极严格，候选稀缺，需全市场扫描才获足够 PASS 样本"
+  },
+  "data_limitations": [
+    "无完整 Historical ST",
+    "无 delist 表，survivorship 受限",
+    "000300 指数 2026-07-24 后缺口",
+    "候选样本需全市场扫描，fixtures 仅覆盖部分股票",
+    "Stability Gate 未预先定义"
+  ],
+  "production_unchanged": true
+}
