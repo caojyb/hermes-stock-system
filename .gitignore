@@ -32,6 +32,7 @@ backups/
 decision/snapshots/
 decision/executions/
 decision/outcomes/
+decision/user_authority/
 
 # ═══ 敏感配置（含真实账号/密码）═══
 emquant_config.json
