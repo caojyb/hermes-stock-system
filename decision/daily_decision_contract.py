@@ -289,6 +289,20 @@ def build_daily_report(today: str | None = None) -> dict:
     readiness = build_account_readiness_section()
     actions = classify_actions(snapshots, sim_trades, readiness)
 
+    summary = build_decision_summary(actions)
+    if not summary.get('total_decisions') and not snapshots:
+        summary = {
+            'total_decisions': 0,
+            'buy_count': 0,
+            'add_count': 0,
+            'hold_count': 0,
+            'reduce_count': 0,
+            'sell_count': 0,
+            'no_trade_count': 0,
+            'trace': [],
+            'market_status': 'NON_TRADING_DAY_OR_NO_DECISION',
+        }
+
     report = {
         'meta': {
             'as_of_time': _now_iso(),
@@ -301,7 +315,7 @@ def build_daily_report(today: str | None = None) -> dict:
         'data_health': build_data_health_section(),
         'real_portfolio': build_real_portfolio_section(),
         'actions': actions,
-        'decision_summary': build_decision_summary(actions),
+        'decision_summary': summary,
         'known_limitations': [
             'Historical ST = BLOCKED',
             'Historical Market Cap = PARTIAL',

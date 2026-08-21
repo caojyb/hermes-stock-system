@@ -1087,6 +1087,27 @@ if PIPELINE_AVAILABLE:
     except Exception as e:
         print(f'  [PIPELINE] 状态记录失败: {e}')
 
+# Phase 8-E.1: 生成 Primary / Secondary 报告，不反向影响 Decision
+try:
+    from decision.daily_decision_contract import build_daily_report, save_daily_report
+    try:
+        primary_report = save_daily_report(build_daily_report())
+        print(f"  [REPORT] Daily Decision Report: {primary_report.get('json_path')} / {primary_report.get('txt_path')}")
+    except Exception as report_err:
+        print(f"  [REPORT] Daily Decision Report 写入失败: {report_err}")
+except Exception as e:
+    print(f"  [REPORT] Daily Decision Report 初始化失败: {e}")
+
+try:
+    from decision.observation import save_daily_observation_report
+    try:
+        secondary_report = save_daily_observation_report()
+        print(f"  [REPORT] Production Observation Report: {secondary_report.get('json_path')} / {secondary_report.get('txt_path')}")
+    except Exception as report_err:
+        print(f"  [REPORT] Production Observation Report 写入失败: {report_err}")
+except Exception as e:
+    print(f"  [REPORT] Production Observation Report 初始化失败: {e}")
+
 conn.close()
 print(f"\n{'='*55}")
 print(f"✅ 扫描完成 | {today_str} | {len(WATCH_LIST)}只标的")

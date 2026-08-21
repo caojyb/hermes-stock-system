@@ -299,11 +299,15 @@ def build_daily_observation_report(observation_date: str | None = None) -> dict:
 def save_daily_observation_report(observation_date: str | None = None) -> dict:
     report = build_daily_observation_report(observation_date)
     _REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    path = _REPORTS_DIR / f"production_observation_{report['observation_date']}.json"
-    tmp = path.with_suffix('.tmp')
+    json_path = _REPORTS_DIR / f"production_observation_{report['observation_date']}.json"
+    txt_path = _REPORTS_DIR / f"production_observation_{report['observation_date']}.txt"
+    txt = format_observation_text(report)
+    tmp = json_path.with_suffix('.tmp')
     tmp.write_text(json.dumps(report, ensure_ascii=False, indent=2, default=str), encoding='utf-8')
-    tmp.replace(path)
-    return {'ok': True, 'path': str(path), 'report': report}
+    tmp.replace(json_path)
+    with open(txt_path, 'w', encoding='utf-8') as f:
+        f.write(txt)
+    return {'ok': True, 'json_path': str(json_path), 'txt_path': str(txt_path), 'report': report}
 
 
 def format_observation_text(report: dict) -> str:

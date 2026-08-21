@@ -256,7 +256,7 @@ def test_17_immutable_observation():
     path = None
     try:
         saved = obs.save_daily_observation_report('2026-08-20')
-        path = Path(saved['path'])
+        path = Path(saved['json_path'])
         assert path.exists()
         original = json.loads(path.read_text(encoding='utf-8'))
         del original['generated_at']
