@@ -84,11 +84,17 @@ def build_primary_feishu_message(report: dict) -> dict:
     lines.append(f"Regime: {mkt.get('regime_label') or 'UNKNOWN'} (score={mkt.get('regime_score') or 'UNKNOWN'})")
     lines.append(f"Position Scale: {mkt.get('position_scale') or 'UNKNOWN'}")
     lines.append("")
-    lines.append("### ACCOUNT READINESS")
-    lines.append(f"Status: {readiness.get('status') or 'UNKNOWN'}")
-    lines.append(f"Source: {rp.get('source') or 'UNKNOWN'} | Quality: {rp.get('data_quality') or 'UNKNOWN'} | Freshness: {rp.get('freshness') or 'UNKNOWN'}")
-    lines.append(f"Cash: {rp.get('cash')} | Total Asset: {rp.get('total_asset')}")
-    lines.append(f"Holdings: {rp.get('holdings_value')} | Exposure: {rp.get('exposure')}")
+    lines.append("### REAL HOLDINGS")
+    lines.append(f"Source: {rp.get('holdings_source') or rp.get('source') or 'UNKNOWN'} | Holdings Status: {rp.get('holdings_status') or 'UNKNOWN'} | Count: {rp.get('holdings_count') or 0}")
+    lines.append(f"Data Quality: {rp.get('data_quality') or 'UNKNOWN'} | Freshness: {rp.get('freshness') or 'UNKNOWN'}")
+    lines.append(f"Holdings Value: {rp.get('holdings_value')} | Exposure: {rp.get('exposure')}")
+    lines.append(f"Risk Status: {rp.get('risk_status') or 'UNKNOWN'}")
+    acct_status = readiness.get('status', 'UNKNOWN')
+    lines.append(f"Account Status: {acct_status}")
+    if acct_status == 'READY':
+        lines.append(f"Cash: {rp.get('cash')} | Total Asset: {rp.get('total_asset')}")
+    else:
+        lines.append("Cash/Total Asset: NOT_CONFIRMED (manual confirmation required)")
     lines.append(f"Drawdown: {rp.get('drawdown')} ({rp.get('drawdown_status')})")
     if rp.get('peak_asset'):
         lines.append(f"Peak Asset: {rp.get('peak_asset')} @ {rp.get('peak_asset_date')}")
@@ -153,6 +159,11 @@ def build_primary_feishu_message(report: dict) -> dict:
         'decision_summary': summary,
         'account_readiness_status': readiness.get('status'),
         'market_regime': mkt.get('regime_label'),
+        'holdings_status': rp.get('holdings_status'),
+        'account_status': readiness.get('status'),
+        'risk_status': rp.get('risk_status'),
+        'holdings_source': rp.get('holdings_source'),
+        'holdings_count': rp.get('holdings_count'),
     }
 
 

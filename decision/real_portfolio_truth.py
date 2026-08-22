@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Real Portfolio Truth Layer（Phase 7.5）
+Real Portfolio Truth Layer（Phase 7.5 / Phase 8-H2）
 ======================================
 真实账户资产事实层：cash + holdings_value = total_asset。
 支持 MANUAL_CONFIRMATION 人工快照，不接券商 API。
@@ -11,6 +11,7 @@ Real Portfolio Truth Layer（Phase 7.5）
 - 不猜现金/总资产
 - 历史峰值从每日快照序列计算，不伪造
 - drawdown 只在 peak_asset KNOWN 时计算
+- Real Holdings ≠ Account Asset
 """
 from __future__ import annotations
 
@@ -24,19 +25,57 @@ from uuid import uuid4
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 BITABLE_TOKEN = os.environ.get('BITABLE_APP_TOKEN', '')
+BASE_TOKEN = BITABLE_TOKEN
 TABLE_ID = "tbluYAy8YJx36jpP"
+
+# Phase 8-H2: Real Holdings 唯一来源
+REAL_HOLDINGS_SOURCE = "FEISHU_BITABLE"
+REAL_HOLDINGS_BASE = "SY99bV2gzajazjs4g14cltp4noe"
+REAL_HOLDINGS_TABLE = TABLE_ID
 
 # 数据健康等级
 VALID, STALE, PARTIAL, MISSING, UNKNOWN = 'VALID', 'STALE', 'PARTIAL', 'MISSING', 'UNKNOWN'
 FRESH, EXPIRED = 'FRESH', 'EXPIRED'
 READY = 'READY'
-READY_PARTIAL, READY_STALE, READY_EXPIRED, READY_MISSING, READY_UNKNOWN = 'PARTIAL', 'STALE', 'EXPIRED', 'MISSING', 'UNKNOWN'
+
+# Phase 8-H2: 三态独立状态机
+class HoldingsStatus:
+    """真实持仓状态：只反映 Bitable 持仓数据质量"""
+    READY = 'READY'        # Bitable 读取成功且 >=1 持仓，关键字段有效
+    EMPTY = 'EMPTY'        # Bitable 成功但无已买入持仓
+    MISSING = 'MISSING'    # Bitable 读取失败
+
+class AccountStatus:
+    """账户资产状态：只反映 cash/total_asset 可用性"""
+    READY = 'READY'        # 存在人工确认且 freshness=FRESH
+    MISSING = 'MISSING'    # 无现金/总资产快照
+    STALE = 'STALE'        # 快照过期
+    EXPIRED = 'EXPIRED'    # 快照超期
+    UNKNOWN = 'UNKNOWN'    # 未知
+
+class PortfolioRiskStatus:
+    """组合风险状态：只反映回撤/流动性"""
+    READY = 'READY'        # 可以计算风险
+    UNKNOWN = 'UNKNOWN'    # 缺资产历史
 
 # A 股最小交易单位
 LOT_SIZE = 100
 
 # 默认历史序列路径
 _DEFAULT_HISTORY_DB = SCRIPT_DIR / 'real_portfolio_history.db'
+
+# Phase 8-H2: Bitable 字段索引常量（禁止散落数字索引）
+BITABLE_FIELD_INDEX = {
+    'CODE': 0,
+    'NAME': 1,
+    'AVG_COST': 2,
+    'CURRENT_PRICE': 3,
+    'BUY_STATUS': 4,
+    'QUANTITY': 5,
+    'BUY_DATE': 6,
+    'SECTOR': 7,
+}
+_EXPECTED_FIELD_COUNT = len(BITABLE_FIELD_INDEX)
 
 
 def _now_iso() -> str:
@@ -47,11 +86,23 @@ def _today_iso() -> str:
     return date.today().isoformat()
 
 
+def _validate_field_order(records: list) -> None:
+    """校验返回记录字段数量是否与 BITABLE_FIELD_INDEX 一致。"""
+    if not records:
+        return
+    actual_len = len(records[0])
+    if actual_len != _EXPECTED_FIELD_COUNT:
+        raise RuntimeError(
+            f"BITABLE_SCHEMA_WARNING: expected {_EXPECTED_FIELD_COUNT} fields, got {actual_len}. "
+            f"Bitable schema may have changed; BITABLE_FIELD_INDEX needs update."
+        )
+
+
 def _read_bitable_holdings() -> list[dict]:
     """从 Bitable 读取真实持仓明细（仅 symbol/quantity/avg_cost/current_price/sector）。"""
     result = subprocess.run(
         ['lark-cli', 'base', '+record-list',
-         '--base-token', BITABLE_TOKEN, '--table-id', TABLE_ID,
+         '--base-token', BASE_TOKEN, '--table-id', TABLE_ID,
          '--field-id', '股票ID', '--field-id', 'name',
          '--field-id', '买入价格', '--field-id', '现价',
          '--field-id', '是否买入', '--field-id', '买入数量',
@@ -62,17 +113,21 @@ def _read_bitable_holdings() -> list[dict]:
         raise RuntimeError(f"lark-cli 失败: {result.stderr[:200]}")
     data = json.loads(result.stdout)
     records = data.get('data', {}).get('data', []) or []
+
+    # Phase 8-H2: 字段数量检查，防止 Bitable 结构漂移
+    _validate_field_order(records)
+
     holdings = []
     for rec in records:
-        buy_status = rec[4]
+        buy_status = rec[BITABLE_FIELD_INDEX['BUY_STATUS']]
         if not (isinstance(buy_status, list) and '已买入' in buy_status):
             continue
-        code = str(rec[0]).strip()
-        name = str(rec[1]).strip()
-        cost = float(rec[2] or 0)
-        cur = float(rec[3] or 0)
-        shares_raw = rec[5]
-        sector = str(rec[7] or '').strip() if len(rec) > 7 else ''
+        code = str(rec[BITABLE_FIELD_INDEX['CODE']]).strip()
+        name = str(rec[BITABLE_FIELD_INDEX['NAME']]).strip()
+        cost = float(rec[BITABLE_FIELD_INDEX['AVG_COST']] or 0)
+        cur = float(rec[BITABLE_FIELD_INDEX['CURRENT_PRICE']] or 0)
+        shares_raw = rec[BITABLE_FIELD_INDEX['QUANTITY']]
+        sector = str(rec[BITABLE_FIELD_INDEX['SECTOR']] or '').strip() if len(rec) > BITABLE_FIELD_INDEX['SECTOR'] else ''
         shares = 0
         if shares_raw:
             try:
@@ -374,6 +429,96 @@ def get_account_readiness(db_path: Path | None = None) -> dict:
     if freshness == UNKNOWN:
         return {'status': 'UNKNOWN', 'reason': 'freshness_unknown', 'as_of_time': as_of, 'snapshot_id': snapshot_id, 'total_asset': total_asset, 'cash': cash, 'freshness': freshness, 'data_quality': dq}
     return {'status': READY, 'reason': 'ok', 'as_of_time': as_of, 'snapshot_id': snapshot_id, 'total_asset': total_asset, 'cash': cash, 'freshness': freshness, 'data_quality': dq}
+
+
+# Phase 8-H2: 三态独立状态机 =========================================================
+
+def get_holdings_status(snap: dict | None = None) -> dict:
+    """
+    从 Real Snapshot 推导 Holdings Status（独立状态机）。
+    READY: Bitable 读取成功且 >=1 持仓，关键字段有效
+    EMPTY: Bitable 成功但无已买入持仓
+    MISSING: Bitable 读取失败 / 快照本身失败
+    """
+    if snap is None:
+        snap = build_real_snapshot()
+    if not snap.get('ok'):
+        return {'status': HoldingsStatus.MISSING, 'reason': snap.get('error', 'unknown')}
+    holdings = snap.get('holdings', []) or []
+    if not holdings:
+        return {'status': HoldingsStatus.EMPTY, 'reason': 'no_holdings', 'count': 0}
+    # 关键字段有效性检查
+    invalid = [h for h in holdings if not (h.get('quantity', 0) > 0 and h.get('avg_cost', 0) > 0 and h.get('current_price', 0) > 0)]
+    if invalid:
+        return {'status': HoldingsStatus.MISSING, 'reason': 'invalid_holding_fields', 'invalid_count': len(invalid), 'count': len(holdings)}
+    return {'status': HoldingsStatus.READY, 'reason': 'ok', 'count': len(holdings)}
+
+
+def get_account_status(db_path: Path | None = None) -> dict:
+    """
+    从历史快照推导 Account Status（独立状态机）。
+    READY: 存在人工确认且 freshness=FRESH
+    MISSING: 无现金/总资产快照
+    STALE: 快照过期
+    EXPIRED: 快照超期
+    UNKNOWN: 未知
+    """
+    r = get_account_readiness(db_path)
+    status = r.get('status', UNKNOWN)
+    if status == READY:
+        s = AccountStatus.READY
+    elif status in (STALE, EXPIRED):
+        s = status
+    else:
+        s = AccountStatus.MISSING if status in (MISSING, PARTIAL) else AccountStatus.UNKNOWN
+    return {
+        'status': s,
+        'reason': r.get('reason'),
+        'snapshot_id': r.get('snapshot_id'),
+        'as_of_time': r.get('as_of_time'),
+        'cash': r.get('cash'),
+        'total_asset': r.get('total_asset'),
+        'freshness': r.get('freshness'),
+        'data_quality': r.get('data_quality'),
+    }
+
+
+def get_portfolio_risk_status(db_path: Path | None = None) -> dict:
+    """
+    从历史快照推导 Portfolio Risk Status（独立状态机）。
+    READY: 可以计算风险（有历史峰值或现价足够）
+    UNKNOWN: 缺资产历史
+    """
+    db = Path(db_path) if db_path else _DEFAULT_HISTORY_DB
+    today = _today_iso()
+    if not db.exists():
+        return {'status': PortfolioRiskStatus.UNKNOWN, 'reason': 'history_db_missing'}
+    conn = sqlite3.connect(db)
+    cur = conn.cursor()
+    cur.execute('SELECT COUNT(*) FROM real_asset_snapshots WHERE total_asset IS NOT NULL AND as_of_time <= ?', (today,))
+    count = cur.fetchone()[0]
+    conn.close()
+    if count == 0:
+        return {'status': PortfolioRiskStatus.UNKNOWN, 'reason': 'no_asset_history'}
+    return {'status': PortfolioRiskStatus.READY, 'reason': 'ok', 'history_count': count}
+
+
+def get_real_portfolio_metadata(snap: dict | None = None) -> dict:
+    """
+    生成 Real Holdings Source metadata。
+    不修改 snap，只提取只读元数据。
+    """
+    if snap is None:
+        snap = build_real_snapshot()
+    holdings = snap.get('holdings', []) or []
+    return {
+        'source': REAL_HOLDINGS_SOURCE,
+        'source_table': f"{REAL_HOLDINGS_BASE}/{REAL_HOLDINGS_TABLE}",
+        'read_time': snap.get('timestamp'),
+        'holding_count': len(holdings),
+        'data_quality': snap.get('data_quality'),
+        'holdings_status': get_holdings_status(snap).get('status'),
+    }
 
 
 if __name__ == '__main__':

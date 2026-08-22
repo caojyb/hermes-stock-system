@@ -256,6 +256,26 @@ def check_real_account_readiness() -> dict:
         return {'status': UNKNOWN, 'reason': str(e)}
 
 
+def _derive_holdings_health(snap: dict | None = None) -> str:
+    try:
+        from decision.real_portfolio_truth import get_holdings_status, build_real_snapshot
+        snap = snap or build_real_snapshot()
+        hs = get_holdings_status(snap).get('status')
+        return 'HEALTHY' if hs == 'READY' else ('DEGRADED' if hs == 'EMPTY' else 'BROKEN')
+    except Exception:
+        return 'BROKEN'
+
+
+def _derive_account_health(account: dict | None = None) -> str:
+    try:
+        from decision.real_portfolio_truth import get_account_status
+        acct = account or get_account_status()
+        s = acct.get('status')
+        return 'HEALTHY' if s == 'READY' else ('DEGRADED' if s in ('PARTIAL', 'STALE', 'EXPIRED', 'UNKNOWN', 'MISSING') else 'BROKEN')
+    except Exception:
+        return 'BROKEN'
+
+
 def build_daily_observation_report(observation_date: str | None = None) -> dict:
     observation_date = observation_date or _today_str()
     base = monitor()
@@ -267,11 +287,16 @@ def build_daily_observation_report(observation_date: str | None = None) -> dict:
     integrity = _count_integrity()
     reconciliation = _reconcile_counts(decisions, executions, positions, outcomes)
     account = check_real_account_readiness()
-    health = _health_from_status(
-        active_gap=base.get('active_pipeline_gap', 0),
-        anomalies=reconciliation.get('anomalies', []),
-        account_ready=account.get('status') == 'READY',
-    )
+    snap = None
+    try:
+        from decision.real_portfolio_truth import build_real_snapshot
+        snap = build_real_snapshot()
+    except Exception:
+        pass
+    holdings_health = _derive_holdings_health(snap)
+    account_health = _derive_account_health(account)
+    pipeline_health = 'BROKEN' if (account.get('status') == 'UNKNOWN' and base.get('active_pipeline_gap', 0) > 5) else ('DEGRADED' if base.get('active_pipeline_gap', 0) > 0 or reconciliation.get('anomalies') else 'HEALTHY')
+    health = min(holdings_health, account_health, pipeline_health, key=lambda x: {'HEALTHY': 2, 'DEGRADED': 1, 'BROKEN': 0}[x])
     report = {
         'observation_date': observation_date,
         'observation_start': OBSERVATION_START,
@@ -289,6 +314,9 @@ def build_daily_observation_report(observation_date: str | None = None) -> dict:
         'reconciliation': reconciliation,
         'account_readiness': account,
         'health': health,
+        'holdings_health': holdings_health,
+        'account_health': account_health,
+        'pipeline_health': pipeline_health,
         'active_pipeline_gap': base.get('active_pipeline_gap', 0),
         'known_legacy_gap': base.get('known_legacy_gap', 0),
         'note': 'Observation only — no strategy evaluation',

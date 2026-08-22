@@ -22,7 +22,7 @@ sys.path.insert(0, '/home/caojy/.hermes/skills/stock/stock-expert')
 sys.path.insert(0, str(SCRIPT_DIR.parent.parent / 'skills/stock/stock-expert'))
 from decision.contract import Decision
 from decision import snapshot as snap
-from decision.real_portfolio_truth import build_real_snapshot, snapshot_portfolio_context, get_account_readiness, VALID, STALE, PARTIAL, MISSING, UNKNOWN, FRESH, EXPIRED, READY
+from decision.real_portfolio_truth import build_real_snapshot, snapshot_portfolio_context, get_account_readiness, get_holdings_status, get_account_status, get_portfolio_risk_status, get_real_portfolio_metadata, VALID, STALE, PARTIAL, MISSING, UNKNOWN, FRESH, EXPIRED, READY
 from decision.real_sizing import compute_real_position_sizing, check_sizing_for_action, BUY, SELL, HOLD, REDUCE, ADD, NO_TRADE, READY, BLOCKED
 from stock_strategy_config import get_market_env_scale
 from stock_db_paths import get_db_path
@@ -181,6 +181,7 @@ def build_real_portfolio_section() -> dict:
     snap = build_real_snapshot()
     p = snap.get('portfolio', {}) or {}
     ctx = snapshot_portfolio_context(snap)
+    meta = get_real_portfolio_metadata(snap)
     return {
         'snapshot_id': snap.get('snapshot_id'),
         'as_of_time': snap.get('as_of_time'),
@@ -200,6 +201,11 @@ def build_real_portfolio_section() -> dict:
         'peak_asset_date': p.get('peak_asset_date'),
         'sector_exposure': p.get('sector_exposure', {}),
         'provenance': snap.get('provenance', {}),
+        'holdings_status': meta.get('holdings_status'),
+        'account_status': build_account_readiness_section().get('status'),
+        'risk_status': get_portfolio_risk_status().get('status'),
+        'holdings_source': meta.get('source'),
+        'holdings_count': meta.get('holding_count'),
     }
 
 
