@@ -179,7 +179,14 @@ def deliver_primary_feishu(report: dict, ua_dir: str | None = None) -> dict:
     decision_ids = [it.get('decision_id') for it in report.get('actions', {}).get('NO_TRADE', []) if it.get('decision_id')]
     for action_key in ('BUY', 'ADD', 'HOLD', 'REDUCE', 'SELL'):
         decision_ids += [it.get('decision_id') for it in report.get('actions', {}).get(action_key, []) if it.get('decision_id')]
-    representative_decision_id = decision_ids[0] if decision_ids else f"daily_{report.get('meta', {}).get('report_date')}"
+    if decision_ids:
+        representative_decision_id = decision_ids[0]
+    else:
+        report_date = report.get('meta', {}).get('report_date')
+        if report_date:
+            representative_decision_id = f"daily_{report_date}"
+        else:
+            representative_decision_id = "daily_unknown"
 
     # 2. 幂等检查
     if is_duplicate_delivery(representative_decision_id, primary['presentation'], primary['channel'], ua_dir):

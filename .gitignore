@@ -73,3 +73,6 @@ Thumbs.db
 /home/caojy/.hermes/data/
 /home/caojy/.hermes/venv/
 /home/caojy/.hermes/hermes-agent/venv/
+reports/
+health_log.json
+north_cache.json
