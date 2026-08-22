@@ -231,6 +231,10 @@ def _reconcile_counts(decisions: dict, executions: dict, positions: dict, outcom
 
 
 def _health_from_status(active_gap: int, anomalies: list, account_ready: bool) -> str:
+    """
+    DEPRECATED：二维健康度已替换为三维健康度 (_derive_account_health / _derive_observation_health)。
+    保留此函数仅用于向后兼容，不再被主流程调用。
+    """
     if not account_ready or active_gap > 5 or any('CLOSED positions != CLOSED outcomes' in a for a in anomalies):
         return 'BROKEN'
     if active_gap > 0 or anomalies:

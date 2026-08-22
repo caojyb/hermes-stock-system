@@ -27,6 +27,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 sys.path.insert(0, str(SCRIPT_DIR.parent))
 
 from decision.contract import BUY, ADD, HOLD, REDUCE, SELL, NO_TRADE
+import decision._local_constants as _local_constants
 from decision.user_authority import (
     record_delivery,
     is_duplicate_delivery,
@@ -41,7 +42,7 @@ from decision.user_authority import (
 from decision.daily_decision_contract import build_daily_report
 
 # Feishu 股票主群（与现有 feishu_sender.py 一致）
-FEISHU_CHAT_ID = "oc_88d1817efbb9f328f4376314ab7c8b05"
+FEISHU_CHAT_ID = _local_constants.FEISHU_CHAT_ID
 # feishu_sender.py 实际路径（项目级 skills，非 cron/decision 子目录）
 FEISHU_SENDER_PATH = Path('/home/caojy/.hermes/skills/stock/stock-expert/skills/feishu-bitable/feishu_sender.py')
 

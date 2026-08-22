@@ -35,7 +35,8 @@ SIM_DB = str(get_db_path('simulation'))
 
 # 飞书推送
 FEISHU_SENDER = str(SCRIPT_DIR.parent / 'skills/stock/stock-expert/skills/feishu-bitable/feishu_sender.py')
-FEISHU_CHAT_ID = "oc_88d1817efbb9f328f4376314ab7c8b05"
+import decision._local_constants as _local_constants
+FEISHU_CHAT_ID = _local_constants.FEISHU_CHAT_ID
 
 
 def get_sim_positions():

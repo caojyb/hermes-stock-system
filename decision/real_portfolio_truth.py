@@ -24,14 +24,15 @@ from pathlib import Path
 from uuid import uuid4
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-BITABLE_TOKEN = os.environ.get('BITABLE_APP_TOKEN', '')
-BASE_TOKEN = BITABLE_TOKEN
-TABLE_ID = "tbluYAy8YJx36jpP"
+import decision._local_constants as _local_constants
+BITABLE_TOKEN = _local_constants.BITABLE_BASE_TOKEN
+BASE_TOKEN = _local_constants.BITABLE_BASE_TOKEN
+TABLE_ID = _local_constants.BITABLE_TABLE_ID
 
 # Phase 8-H2: Real Holdings 唯一来源
 REAL_HOLDINGS_SOURCE = "FEISHU_BITABLE"
-REAL_HOLDINGS_BASE = "SY99bV2gzajazjs4g14cltp4noe"
-REAL_HOLDINGS_TABLE = TABLE_ID
+REAL_HOLDINGS_BASE = _local_constants.REAL_HOLDINGS_BASE
+REAL_HOLDINGS_TABLE = _local_constants.BITABLE_TABLE_ID
 
 # 数据健康等级
 VALID, STALE, PARTIAL, MISSING, UNKNOWN = 'VALID', 'STALE', 'PARTIAL', 'MISSING', 'UNKNOWN'
@@ -230,6 +231,13 @@ def build_real_snapshot(
         if total_holdings_value > 0:
             d['position_pct_holdings'] = round(d['market_value'] / total_holdings_value, 4)
 
+    # 2b. Data Quality Guard（Cost / Price / Quantity / Ratio 四层校验）
+    try:
+        from decision.real_portfolio_quality import check_portfolio_quality
+        quality_report = check_portfolio_quality(detail)
+    except Exception as e:
+        quality_report = {'overall': 'UNKNOWN', 'flags': [], 'error_count': 0, 'warning_count': 0, 'guard_error': str(e)}
+
     # 3. Cash / Total Asset
     if source == 'MANUAL_CONFIRMATION' and (cash is not None or total_asset is not None):
         data_quality = VALID if cash is not None and total_asset is not None else PARTIAL
@@ -283,6 +291,7 @@ def build_real_snapshot(
         'ok': True, 'snapshot_id': snapshot_id, 'timestamp': now, 'as_of_time': as_of,
         'source': source, 'data_quality': data_quality, 'freshness': freshness,
         'holdings': detail, 'portfolio': portfolio, 'provenance': provenance,
+        'quality_report': quality_report,
     }
 
 

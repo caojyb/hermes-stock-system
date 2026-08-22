@@ -9,8 +9,9 @@ from datetime import datetime
 
 DB = "/home/caojy/.hermes/skills/stock/stock-expert/market_cache.db"
 WESTOCK = "npx -y westock-data-skillhub@1.0.3"
-BT_APP = os.environ.get('BITABLE_APP_TOKEN', '')
-BT_TABLE = "tbluYAy8YJx36jpP"
+import decision._local_constants as _local_constants
+BT_APP = _local_constants.BITABLE_BASE_TOKEN
+BT_TABLE = _local_constants.BITABLE_TABLE_ID
 
 def to_westock(code):
     code = str(code).zfill(6)

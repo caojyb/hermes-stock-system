@@ -30,9 +30,10 @@ SIM_DB = '/home/caojy/.hermes/scripts/cron/simulation.db'
 
 # 飞书
 FEISHU_SENDER = str(SCRIPT_DIR.parent / 'skills/stock/stock-expert/skills/feishu-bitable/feishu_sender.py')
-FEISHU_CHAT_ID = "oc_88d1817efbb9f328f4376314ab7c8b05"
-BITABLE_TOKEN = os.environ.get('BITABLE_APP_TOKEN', '')
-TABLE_ID = "tbluYAy8YJx36jpP"
+import decision._local_constants as _local_constants
+FEISHU_CHAT_ID = _local_constants.FEISHU_CHAT_ID
+BITABLE_TOKEN = _local_constants.BITABLE_BASE_TOKEN
+TABLE_ID = _local_constants.BITABLE_TABLE_ID
 TOTAL_CAPITAL = 1_000_000
 
 # 止损参数（Phase 5 不修改，仅作为 Exit Assessment 输入）
@@ -78,6 +79,7 @@ def get_real_positions():
             buy_status = rec[4]
             shares_raw = rec[5]
             buy_date = str(rec[6] or '')
+            sector = str(rec[7] or '').strip() if len(rec) > 7 else ''
 
             if isinstance(buy_status, list) and '已买入' in buy_status:
                 shares = 0
@@ -89,7 +91,7 @@ def get_real_positions():
                 positions.append({
                     'code': code, 'name': name,
                     'cost_price': cost_price, 'current_price': current_price,
-                    'shares': shares, 'buy_date': buy_date,
+                    'shares': shares, 'buy_date': buy_date, 'sector': sector,
                 })
         return positions
     except Exception as e:
@@ -205,7 +207,7 @@ def run_decision():
         print("⚠️ 无真实持仓数据，跳过")
         return []
     # 构建 Real Portfolio Snapshot（真实数据，不读 simulation）
-    from decision.real_portfolio import build_real_snapshot
+    from decision.real_portfolio_truth import build_real_snapshot
     holdings = [{'code': p['code'], 'name': p['name'], 'quantity': p['shares'],
                  'avg_cost': p['cost_price'], 'current_price': p['current_price'],
                  'sector': p.get('sector', '')} for p in positions]

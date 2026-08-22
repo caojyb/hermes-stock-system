@@ -21,8 +21,9 @@ from pathlib import Path
 from uuid import uuid4
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-BITABLE_TOKEN = os.environ.get('BITABLE_APP_TOKEN', '')
-TABLE_ID = "tbluYAy8YJx36jpP"
+import decision._local_constants as _local_constants
+BITABLE_TOKEN = _local_constants.BITABLE_BASE_TOKEN
+TABLE_ID = _local_constants.BITABLE_TABLE_ID
 
 # 数据健康等级
 VALID, STALE, PARTIAL, MISSING, UNKNOWN = 'VALID', 'STALE', 'PARTIAL', 'MISSING', 'UNKNOWN'

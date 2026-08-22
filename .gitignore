@@ -76,3 +76,5 @@ Thumbs.db
 reports/
 health_log.json
 north_cache.json
+decision/_local_constants.py
+decision/_local_constants.override.json

@@ -15,7 +15,7 @@ sys.path.insert(0, '/home/caojy/.hermes/skills/stock/stock-expert')
 from stock_db_paths import get_db_path
 
 MARKET_DB = str(get_db_path('market_cache'))
-SIM_DB = str(get_db_path('simulation'))
+SIM_DB = str(get_db_path('simulation_test' if os.environ.get('SIM_MODE') == 'test' else 'simulation'))
 
 # 中证2000指数代码
 CSI2000_CODE = "932000"  # 中证2000

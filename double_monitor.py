@@ -939,7 +939,7 @@ print(f"\n{'='*55}")
 print("📊 数据全面性升级")
 print(f"{'='*55}")
 from data_upgrade import run_all
-run_all(candidate_pool=[{'code':s['code'],'name':s['name'],'sector':s.get('sector','')} for s in WATCH_LIST] if hasattr(WATCH_LIST[0], 'get') else None)
+run_all(candidate_pool=[{'code':s['code'],'name':s['name'],'sector':s.get('sector','')} for s in WATCH_LIST] if WATCH_LIST and hasattr(WATCH_LIST[0], 'get') else None)
 
 # ── 四个过滤器 ──
 print(f"\n{'='*55}")
