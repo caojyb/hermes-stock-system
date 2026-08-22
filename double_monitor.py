@@ -1116,6 +1116,20 @@ try:
 except Exception as e:
     print(f"  [REPORT] Daily Decision Report 初始化失败: {e}")
 
+# Phase 8-G0.2: Primary Feishu Delivery（只发送已生成的 Decision，不重算）
+try:
+    from decision.feishu_delivery import deliver_primary_feishu_with_retry
+    try:
+        delivery_result = deliver_primary_feishu_with_retry(primary_report if 'primary_report' in dir() else build_daily_report(), max_retries=1)
+        print(f"  [DELIVERY] Primary Feishu: status={delivery_result.get('delivery_status')} "
+              f"id={delivery_result.get('delivery_id')} "
+              f"retry={delivery_result.get('retry_count')} "
+              f"error={delivery_result.get('error') or 'none'}")
+    except Exception as delivery_err:
+        print(f"  [DELIVERY] Primary Feishu 投递失败（不影响 Decision）: {delivery_err}")
+except Exception as e:
+    print(f"  [DELIVERY] Primary Feishu 初始化失败: {e}")
+
 try:
     from decision.observation import save_daily_observation_report
     try:

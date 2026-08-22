@@ -385,6 +385,7 @@ def check_portfolio_drawdown_v2(conn_sim, force_report=False):
     返回: (action: str, messages: list)
     action: 'liquidate' | 'trim' | 'crisis_alert' | 'exempt' | 'none'
     """
+    conn_sim.row_factory = sqlite3.Row
     cur = conn_sim.cursor()
     today = date.today().isoformat()
     messages = []
@@ -395,6 +396,16 @@ def check_portfolio_drawdown_v2(conn_sim, force_report=False):
         WHERE date >= ? ORDER BY date DESC
     """, ((date.today() - timedelta(days=45)).isoformat(),))
     snapshots = [dict(r) for r in cur.fetchall()]
+    # fail-safe：丢弃 total_value 缺失/非数值的异常行，避免 legacy/malformed 数据崩溃
+    valid = []
+    for s in snapshots:
+        try:
+            s['total_value'] = float(s['total_value']) if s.get('total_value') is not None else None
+            if s['total_value'] is not None:
+                valid.append(s)
+        except (TypeError, ValueError):
+            continue
+    snapshots = valid
 
     if not snapshots:
         return "none", messages

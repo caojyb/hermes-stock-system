@@ -178,9 +178,8 @@ def build_real_snapshot(
     # 3. Cash / Total Asset
     if source == 'MANUAL_CONFIRMATION' and (cash is not None or total_asset is not None):
         data_quality = VALID if cash is not None and total_asset is not None else PARTIAL
-        cash = cash if cash is not None else (total_asset - total_holdings_value if total_asset is not None else None)
-        if total_asset is None:
-            total_asset = (cash or 0) + total_holdings_value
+        # 禁止自动补齐缺失字段，保留 PARTIAL/UNKNOWN 语义
+        # cash/total_asset 仅当显式提供时才赋值，否则保持 None
         provenance['manual_cash_provided'] = cash is not None
         provenance['manual_total_asset_provided'] = total_asset is not None
     else:
