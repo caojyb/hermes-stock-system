@@ -177,8 +177,10 @@ def deliver_primary_feishu(report: dict, ua_dir: str | None = None) -> dict:
     # 1. 构建 Primary Message
     primary = build_primary_feishu_message(report)
 
-    decision_ids = [it.get('decision_id') for it in report.get('actions', {}).get('NO_TRADE', []) if it.get('decision_id')]
-    for action_key in ('BUY', 'ADD', 'HOLD', 'REDUCE', 'SELL'):
+    # representative_decision_id：按决策优先级选择，避免 NO_TRADE 覆盖真实决策
+    _PRIORITY = ['BUY', 'ADD', 'SELL', 'REDUCE', 'HOLD', 'NO_TRADE']
+    decision_ids = []
+    for action_key in _PRIORITY:
         decision_ids += [it.get('decision_id') for it in report.get('actions', {}).get(action_key, []) if it.get('decision_id')]
     if decision_ids:
         representative_decision_id = decision_ids[0]

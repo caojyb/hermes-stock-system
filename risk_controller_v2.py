@@ -448,10 +448,23 @@ def check_portfolio_drawdown_v2(conn_sim, force_report=False):
         # 2b. 正常减仓至50%（用真实收盘价，非编造价）
         messages.append(f"🚨组合净值回撤{drawdown:.1%}，超过{PORTFOLIO_DRAWDOWN_LIMIT:.0%}减仓线！执行减仓至50%")
 
-        cur.execute("""SELECT id, code, name, buy_shares, buy_price, buy_amount
+        cur.execute("""
+            SELECT id, code, name, buy_shares, buy_price, buy_amount
             FROM trades WHERE status IN ('持有','部分止盈')
-            ORDER BY (buy_price - ?) / buy_price ASC""", (current_value / 100000,))
+        """)
         holdings = [dict(r) for r in cur.fetchall()]
+
+        mkt = sqlite3.connect(MARKET_DB)
+
+        # 按实际跌幅排序：最差持仓优先减仓
+        price_map = {}
+        for h in holdings:
+            row = mkt.execute("SELECT close FROM klines WHERE code=? ORDER BY date DESC LIMIT 1", (h['code'],)).fetchone()
+            price_map[h['code']] = float(row[0]) if row and row[0] else h['buy_price'] * 0.95
+        holdings.sort(key=lambda h: (
+            (h['buy_price'] - price_map.get(h['code'], h['buy_price'])) / h['buy_price']
+            if h['buy_price'] else 0
+        ), reverse=True)
 
         total_position_value = sum(h['buy_amount'] for h in holdings)
         target_value = total_position_value * 0.5

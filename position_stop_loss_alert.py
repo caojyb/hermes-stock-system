@@ -26,7 +26,7 @@ sys.path.insert(0, '/home/caojy/.hermes/skills/stock/stock-expert')
 from stock_db_paths import get_db_path
 
 MARKET_DB = str(get_db_path('market_cache'))
-SIM_DB = '/home/caojy/.hermes/scripts/cron/simulation.db'
+SIM_DB = str(get_db_path('simulation_test' if os.environ.get('SIM_MODE') == 'test' else 'simulation'))
 
 # 飞书
 FEISHU_SENDER = str(SCRIPT_DIR.parent / 'skills/stock/stock-expert/skills/feishu-bitable/feishu_sender.py')

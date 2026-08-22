@@ -253,6 +253,13 @@ def build_real_snapshot(
         provenance['auto_cash_available'] = False
         provenance['auto_total_asset_available'] = False
 
+    # 2c. Data Quality Guard 结果优先于自动推断
+    qr = locals().get('quality_report', {})
+    if qr.get('error_count', 0) > 0:
+        data_quality = 'ERROR'
+    elif qr.get('warning_count', 0) > 0 and data_quality == 'VALID':
+        data_quality = 'WARNING'
+
     exposure = 0.0
     if total_asset and total_asset > 0:
         exposure = round(total_holdings_value / total_asset, 4)
@@ -317,11 +324,16 @@ def record_asset_snapshot(snap: dict, db_path: Path | None = None) -> str:
             peak_asset_date TEXT,
             provenance_json TEXT,
             created_at TEXT,
-            freshness TEXT
+            freshness TEXT,
+            quality_report_json TEXT
         )
     ''')
     try:
         cur.execute("ALTER TABLE real_asset_snapshots ADD COLUMN freshness TEXT")
+    except Exception:
+        pass
+    try:
+        cur.execute("ALTER TABLE real_asset_snapshots ADD COLUMN quality_report_json TEXT")
     except Exception:
         pass
     p = snap.get('portfolio', {})
@@ -331,13 +343,14 @@ def record_asset_snapshot(snap: dict, db_path: Path | None = None) -> str:
         (snapshot_id, as_of_time, source, data_quality,
          cash, holdings_value, total_asset, position_count,
          drawdown, drawdown_status, peak_asset, peak_asset_date,
-         provenance_json, created_at, freshness)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         provenance_json, created_at, freshness, quality_report_json)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ''', (
         snap.get('snapshot_id'), snap.get('as_of_time'), snap.get('source'), snap.get('data_quality'),
         p.get('cash'), p.get('holdings_value'), p.get('total_asset'), p.get('position_count'),
         p.get('drawdown'), p.get('drawdown_status'), p.get('peak_asset'), p.get('peak_asset_date'),
         json.dumps(prov, ensure_ascii=False, default=str), _now_iso(), snap.get('freshness'),
+        json.dumps(snap.get('quality_report', {}), ensure_ascii=False, default=str),
     ))
     conn.commit()
     conn.close()

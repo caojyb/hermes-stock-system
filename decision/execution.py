@@ -392,16 +392,16 @@ def build_outcome_from_execution(execution_id, decision=None):
             realized = (exit_price - entry) * eff_qty
     else:
         summary = ex.get('exit_summary')
+        entry_qty = ex['actual'].get('quantity', 0)
         if summary and summary.get('total_quantity'):
             exit_price = summary['weighted_avg_price']
             qty = summary['total_quantity']
-            entry_qty = ex['actual'].get('quantity', 0)
             eff_qty = qty if not entry_qty else min(qty, entry_qty)
         else:
             exit_price = ex.get('exit', {}).get('price', 0)
             qty = ex['actual'].get('quantity', 0)
             eff_qty = qty
-        total_entry_qty = entry_qty if 'entry_qty' in dir() else ex['actual'].get('quantity', 0)
+        total_entry_qty = entry_qty
         total_exit_qty = eff_qty
         if not exit_price:
             return None
