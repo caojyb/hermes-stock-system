@@ -186,7 +186,7 @@ def build_position_decision(p, mkt, regime, permission, snap, total_capital=None
     eng = DecisionEngine(strategy='v1_double', config_version='phase1', code_version='real_portfolio_p55')
     ctx = position_ctx(
         symbol=code, name=name, regime_label=regime['label'], regime_score=regime['score'],
-        permission=permission['permission'], permission_status=permission['status'],
+        permission=permission, permission_status=permission['status'],
         data_health='VALID', exit_signal=exit_signal, exit_triggers=exit_triggers,
         drawdown=drawdown or 0, position_count=pos_count, current_exposure=current_position,
         current_position=current_position,
@@ -235,6 +235,13 @@ def run_decision():
         dec, reasons = build_position_decision(p, market_data.get(p['code'], {}), regime, permission,
                                                snap, TOTAL_CAPITAL)
         decisions.append({'decision': dec, 'exit_reasons': reasons})
+    # 落盘到 Decision Snapshots，供 daily_decision_contract 读入
+    try:
+        from decision.snapshot import save_snapshot
+        for item in decisions:
+            save_snapshot(item['decision'])
+    except Exception as _e:
+        print(f"[WARN] snapshot save failed: {_e}")
     return decisions
 
 

@@ -998,6 +998,7 @@ try:
     open_pos_for_cash = sim_cur.execute("SELECT buy_shares, buy_price FROM trades WHERE status IN ('持有','部分止盈')").fetchall()
     all_sold = sim_cur.execute("SELECT COALESCE(SUM(sell_amount),0) FROM trades WHERE sell_date IS NOT NULL").fetchone()[0]
     cash = TOTAL_CAPITAL - sum((shares or 0) * (price or 0) for shares, price in open_pos_for_cash) + all_sold
+    # 风控减仓后再刷新一次，避免刚减仓后现金仍被低估
 
     # 当前持仓市值 + 浮盈分布（现价 × 股数）
     mkt_cur = conn.cursor()
@@ -1065,6 +1066,11 @@ try:
             print(f"   🚨 {rc_m}")
         if rc_action and rc_action != 'none':
             print(f"   组合回撤风控: 触发 action={rc_action}")
+            # 风控减仓后重新计算现金
+            all_sold = sim_cur.execute("SELECT COALESCE(SUM(sell_amount),0) FROM trades WHERE sell_date IS NOT NULL").fetchone()[0]
+            open_pos_for_cash = sim_cur.execute("SELECT buy_shares, buy_price FROM trades WHERE status IN ('持有','部分止盈')").fetchall()
+            cash = TOTAL_CAPITAL - sum((shares or 0) * (price or 0) for shares, price in open_pos_for_cash) + all_sold
+            print(f"   [RC-REFRESH] 风控后现金={cash:.0f}")
     except Exception as e:
         print(f"   [WARN] 组合回撤风控检查失败: {e}")
 

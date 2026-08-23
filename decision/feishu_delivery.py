@@ -174,6 +174,22 @@ def deliver_primary_feishu(report: dict, ua_dir: str | None = None) -> dict:
     返回 delivery record。
     不修改 report，不重算 Decision。
     """
+    # 0. 非交易日 / 无决策报告：不投递 Primary，直接返回 SUPPRESSED
+    market_status = report.get('decision_summary', {}).get('market_status', '')
+    if market_status == 'NON_TRADING_DAY_OR_NO_DECISION':
+        return {
+            'delivery_status': 'SUPPRESSED_NON_TRADING_DAY',
+            'delivery_id': None,
+            'decision_id': None,
+            'presentation': 'daily_decision',
+            'send_time': None,
+            'message_hash': None,
+            'error': None,
+            'source': 'feishu_delivery',
+            'channel': 'feishu',
+            'retry_count': 0
+        }
+
     # 1. 构建 Primary Message
     primary = build_primary_feishu_message(report)
 

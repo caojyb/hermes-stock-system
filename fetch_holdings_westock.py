@@ -21,7 +21,12 @@ def to_westock(code):
 def read_holdings_codes():
     out = subprocess.run(['lark-cli','base','+record-list','--base-token',BT_APP,
                           '--table-id',BT_TABLE], capture_output=True, text=True, timeout=60).stdout
-    return re.findall(r'\|\s*(\d{6})\s*\|', out)
+    codes = re.findall(r'\|\s*(\d{6})\s*\|', out)
+    if not codes:
+        raise RuntimeError(f"fetch_holdings_westock: lark-cli 返回空代码列表，输出可能已变更。原始输出前200字符: {out[:200]!r}")
+    if not all(len(c) == 6 and c.isdigit() for c in codes):
+        raise RuntimeError(f"fetch_holdings_westock: 提取到非6位代码: {codes}")
+    return codes
 
 def run_westock(cmd, code):
     import time as _t
