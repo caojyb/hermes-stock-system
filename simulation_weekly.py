@@ -5,8 +5,9 @@
 import sqlite3, json
 from datetime import date, timedelta
 from pathlib import Path
+from simulation_db_helper import get_active_sim_db
 
-SIM_DB = "/home/caojy/.hermes/scripts/cron/simulation.db"
+SIM_DB = str(get_active_sim_db())
 MARKET_DB = "/home/caojy/.hermes/skills/stock/stock-expert/market_cache.db"
 TOTAL_CAPITAL = 1_000_000
 

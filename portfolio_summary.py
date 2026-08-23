@@ -17,6 +17,7 @@ import json
 import sqlite3
 from datetime import date, datetime
 from pathlib import Path
+from simulation_db_helper import get_active_sim_db
 
 # ── 路径 ──
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -31,7 +32,7 @@ except ModuleNotFoundError:
     from stock_db_paths import get_db_path
 
 MARKET_DB = str(get_db_path('market_cache'))
-SIM_DB = str(get_db_path('simulation'))
+SIM_DB = str(get_active_sim_db())
 
 # 飞书推送
 FEISHU_SENDER = str(SCRIPT_DIR.parent / 'skills/stock/stock-expert/skills/feishu-bitable/feishu_sender.py')

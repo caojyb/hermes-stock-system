@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pool_loader
 
 MKT_DB = '/home/caojy/.hermes/skills/stock/stock-expert/market_cache.db'
-SIM_DB = '/home/caojy/.hermes/scripts/cron/simulation.db'
+SIM_DB = str(get_active_sim_db())
 
 # 热门赛道列表（2026年7月更新）
 HOT_TRACKS = {

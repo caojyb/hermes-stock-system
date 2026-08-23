@@ -421,7 +421,7 @@ conn.close()
 print(f"\n{'='*65}")
 print("📊 模拟组合周报")
 print(f"{'='*65}")
-sim_db = "/home/caojy/.hermes/scripts/cron/simulation.db"
+sim_db = str(get_active_sim_db())
 if os.path.exists(sim_db):
     sim_conn = sqlite3.connect(sim_db)
     sim_cur = sim_conn.cursor()

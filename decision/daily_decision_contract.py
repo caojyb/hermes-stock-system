@@ -188,6 +188,7 @@ def build_real_portfolio_section() -> dict:
         'source': snap.get('source'),
         'data_quality': snap.get('data_quality'),
         'freshness': snap.get('freshness'),
+        'quality_report': snap.get('quality_report'),
         'holdings': snap.get('holdings', []),
         'position_count': p.get('position_count', 0),
         'holdings_value': p.get('holdings_value'),

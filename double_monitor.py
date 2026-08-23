@@ -994,13 +994,10 @@ print(f"📊 【模拟仓每日摘要】{today_str}")
 print(f"{'─'*50}")
 try:
     # ── 实时结算（不再读陈旧快照：portfolio_snapshots 无进程更新，改用现价实时计算）──
-    # 现金 = 初始资金 - 累计买入金额 + 累计卖出回款
-    sim_cur.execute("SELECT COALESCE(SUM(buy_amount),0) FROM trades "
-                    "WHERE status IN ('持有','部分止盈','止损','清仓止盈','减仓')")
-    all_bought = sim_cur.fetchone()[0]
-    sim_cur.execute("SELECT COALESCE(SUM(sell_amount),0) FROM trades WHERE sell_date IS NOT NULL")
-    all_sold = sim_cur.fetchone()[0]
-    cash = TOTAL_CAPITAL - all_bought + all_sold
+    # 现金 = 初始资金 - 当前持仓成本 + 累计卖出回款
+    open_pos_for_cash = sim_cur.execute("SELECT buy_shares, buy_price FROM trades WHERE status IN ('持有','部分止盈')").fetchall()
+    all_sold = sim_cur.execute("SELECT COALESCE(SUM(sell_amount),0) FROM trades WHERE sell_date IS NOT NULL").fetchone()[0]
+    cash = TOTAL_CAPITAL - sum((shares or 0) * (price or 0) for shares, price in open_pos_for_cash) + all_sold
 
     # 当前持仓市值 + 浮盈分布（现价 × 股数）
     mkt_cur = conn.cursor()
@@ -1017,7 +1014,7 @@ try:
         price = float(pr[0])
         market_val = price * shares
         holdings_value += market_val
-        if market_val - buy_price * shares > 0:
+        if market_val - buy_price * shares >= 0:
             win_cnt += 1
         else:
             loss_cnt += 1
@@ -1041,13 +1038,11 @@ try:
     sim_conn.commit()
 
     # 今日交易
-    sim_cur.execute("SELECT code, name, status, buy_price, profit_pct FROM trades WHERE buy_date=? OR sell_date=?",
-                    (today_str, today_str))
-    today_trades = sim_cur.fetchall()
-    buys = [t for t in today_trades if t[0] in [x[0] for x in sim_cur.execute(
-        "SELECT code FROM trades WHERE buy_date=?", (today_str,)).fetchall()]]
-    sells = [t for t in today_trades if t[0] in [x[0] for x in sim_cur.execute(
-        "SELECT code FROM trades WHERE sell_date=?", (today_str,)).fetchall()]]
+    today_str = date.today().isoformat()
+    sim_cur.execute("SELECT code, name, status, buy_price, profit_pct FROM trades WHERE buy_date=?", (today_str,))
+    buys = sim_cur.fetchall()
+    sim_cur.execute("SELECT code, name, status, buy_price, profit_pct FROM trades WHERE sell_date=?", (today_str,))
+    sells = sim_cur.fetchall()
     if buys or sells:
         buy_names = [f"{t[1]}" for t in buys[:3]]
         sell_detail = []

@@ -17,11 +17,12 @@
 import os, sys, json, sqlite3, math
 from datetime import datetime, timedelta, date
 from pathlib import Path
+from simulation_db_helper import get_active_sim_db
 from collections import defaultdict
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 MARKET_DB = "/home/caojy/.hermes/skills/stock/stock-expert/market_cache.db"
-SIM_DB = str(SCRIPT_DIR / "simulation.db")
+SIM_DB = str(get_active_sim_db())
 EXEC_LOG = SCRIPT_DIR / "execution_log.json"
 
 # 撮合参数

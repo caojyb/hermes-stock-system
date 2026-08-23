@@ -15,9 +15,10 @@ import pool_loader
 from datetime import date, datetime, timedelta
 from collections import defaultdict
 from pathlib import Path
+from simulation_db_helper import get_active_sim_db
 
 MKT_DB = "/home/caojy/.hermes/skills/stock/stock-expert/market_cache.db"
-SIM_DB = "/home/caojy/.hermes/scripts/cron/simulation.db"
+SIM_DB = str(get_active_sim_db())
 NORTH_LOG = "/home/caojy/.hermes/scripts/cron/north_flow_log.json"
 
 def fetch_north_top(limit=50):

@@ -11,9 +11,10 @@ import os, sys, sqlite3, json, requests, time
 from datetime import date, datetime, timedelta
 from collections import defaultdict
 from pathlib import Path
+from simulation_db_helper import get_active_sim_db
 
 MARKET_DB = "/home/caojy/.hermes/skills/stock/stock-expert/market_cache.db"
-SIM_DB = "/home/caojy/.hermes/scripts/cron/simulation.db"
+SIM_DB = str(get_active_sim_db())
 SECTOR_RATING_FILE = "/home/caojy/.hermes/scripts/cron/sector_rating.json"
 
 def ensure_tables():

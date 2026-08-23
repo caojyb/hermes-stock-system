@@ -17,11 +17,12 @@ from collections import defaultdict
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pool_loader
 from pathlib import Path
+from simulation_db_helper import get_active_sim_db
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / 'skills/stock/stock-expert'))
 from stock_db_paths import get_db_path
 MARKET_DB = str(get_db_path('market_cache'))
-SIM_DB = "/home/caojy/.hermes/scripts/cron/simulation.db"
+SIM_DB = str(get_active_sim_db())
 # P2-2: 模拟仓交易标记策略来源
 from stock_strategy_config import DEFAULT_STRATEGY
 

@@ -7,7 +7,7 @@ import sqlite3
 from datetime import date, timedelta, datetime
 from collections import defaultdict
 
-SIM_DB = "/home/caojy/.hermes/scripts/cron/simulation.db"
+SIM_DB = str(get_active_sim_db())
 MARKET_DB = "/home/caojy/.hermes/skills/stock/stock-expert/market_cache.db"
 TOTAL_CAPITAL = 1_000_000.0
 POSITION_PCT = 0.20          # 总仓位 20%

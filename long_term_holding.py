@@ -23,12 +23,13 @@ import os, sys, json, sqlite3, requests
 from datetime import date, datetime, timedelta
 from collections import defaultdict
 from pathlib import Path
+from simulation_db_helper import get_active_sim_db
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pool_loader
 
 MKT_DB = '/home/caojy/.hermes/skills/stock/stock-expert/market_cache.db'
-SIM_DB = '/home/caojy/.hermes/scripts/cron/simulation.db'
+SIM_DB = str(get_active_sim_db())
 SECTOR_RATING_FILE = os.path.join(os.path.dirname(__file__), 'sector_rating.json')
 
 HEADERS = {'User-Agent': 'Mozilla/5.0'}

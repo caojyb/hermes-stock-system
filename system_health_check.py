@@ -7,12 +7,13 @@
 import os, sys, json, sqlite3, importlib, math, datetime
 from datetime import date, datetime as dt, timedelta
 from pathlib import Path
+from simulation_db_helper import get_active_sim_db
 from collections import defaultdict
 
 FEISHU_DIR = Path("/home/caojy/.hermes/skills/stock/stock-expert/skills/feishu-bitable")
 SCRIPT_DIR = Path(__file__).parent.resolve()
 MKT_DB = '/home/caojy/.hermes/skills/stock/stock-expert/market_cache.db'
-SIM_DB = SCRIPT_DIR / 'simulation.db'
+SIM_DB = get_active_sim_db()
 TODAY = date.today()
 TODAY_STR = TODAY.isoformat()
 

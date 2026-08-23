@@ -8,9 +8,10 @@
 import os, sys, json, sqlite3, requests
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from simulation_db_helper import get_active_sim_db
 
 MKT_DB = '/home/caojy/.hermes/skills/stock/stock-expert/market_cache.db'
-SIM_DB = '/home/caojy/.hermes/scripts/cron/simulation.db'
+SIM_DB = str(get_active_sim_db())
 PENDING_FILE = '/home/caojy/.hermes/scripts/cron/track_pending_buy.json'
 TRACK_POOL_FILE = '/home/caojy/.hermes/scripts/cron/track_loose_pool.json'
 TOTAL_CAPITAL = 1000000

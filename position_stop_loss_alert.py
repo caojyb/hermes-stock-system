@@ -160,9 +160,11 @@ def _portfolio_context(snap):
             p.get('total_holdings_value', 0), p.get('drawdown_status', 'UNKNOWN'), p.get('drawdown'))
 
 
-def build_position_decision(p, mkt, regime, permission, snap, total_capital):
+def build_position_decision(p, mkt, regime, permission, snap, total_capital=None):
     """单只真实持仓 → 统一 Decision（HOLD/REDUCE/SELL/ADD + 仓位建议）。
     使用 Real Portfolio Snapshot（真实数据），不读 simulation。"""
+    if total_capital is None:
+        total_capital = snap.get('portfolio', {}).get('total_asset') or TOTAL_CAPITAL
     from decision.engine import DecisionEngine
     from decision.adapters import position_ctx
     from decision.portfolio import assess_portfolio
