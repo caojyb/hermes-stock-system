@@ -50,7 +50,7 @@ def position_ctx(*, symbol, name='', regime_label='', regime_score=0.0, regime_v
                  stop_loss=0.0, take_profit=None, trailing_stop=0.0, as_of_time='',
                  current_position=0.0, target_position=0.0,
                  portfolio_risk=RISK_OK, portfolio_assessment=None,
-                 entry_signal=ENTRY_NONE,
+                 entry_signal=ENTRY_NONE, reference_price=0.0,
                  portfolio_snapshot_id='', portfolio_source='', portfolio_as_of_time=''):
     """已有持仓 → Decision ctx（Position Management：Exit/REDUCE/ADD/HOLD）。"""
     return {
@@ -63,6 +63,7 @@ def position_ctx(*, symbol, name='', regime_label='', regime_score=0.0, regime_v
         'drawdown': drawdown, 'position_count': position_count, 'current_exposure': current_exposure,
         'stop_loss': stop_loss, 'take_profit': list(take_profit or []), 'trailing_stop': trailing_stop,
         'current_position': current_position, 'target_position': target_position,
+        'reference_price': reference_price,
         'portfolio_risk': portfolio_risk, 'portfolio_assessment': portfolio_assessment,
         'entry_signal': entry_signal,
         'portfolio_snapshot_id': portfolio_snapshot_id,

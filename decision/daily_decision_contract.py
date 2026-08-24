@@ -89,10 +89,11 @@ def classify_actions(snapshots: list[dict], sim_trades: list[dict], readiness: d
 
     for d in snapshots:
         raw_action = d.get('action', 'NO_TRADE')
-        entry = d.get('entry', {}) or {}
-        portfolio = d.get('portfolio', {}) or {}
-        risk = d.get('risk', {}) or {}
-
+        # Decision.freeze() 返回扁平 dict，无嵌套 entry/portfolio/risk
+        entry_price = d.get('reference_price')
+        if entry_price is None:
+            entry_price = d.get('entry_price')
+        target_position = d.get('target_position')
         item = {
             'decision_id': d.get('decision_id'),
             'symbol': d.get('symbol'),
@@ -106,18 +107,18 @@ def classify_actions(snapshots: list[dict], sim_trades: list[dict], readiness: d
             'permission': d.get('permission'),
             'portfolio_risk': d.get('portfolio_risk'),
             'entry': {
-                'entry_signal': entry.get('entry_signal'),
-                'entry_price': entry.get('entry_price'),
-                'planned_entry_time': entry.get('planned_entry_time'),
-                'target_position': entry.get('target_position'),
+                'entry_signal': d.get('entry_signal'),
+                'entry_price': entry_price,
+                'planned_entry_time': d.get('as_of_time'),
+                'target_position': target_position,
             },
             'risk': {
-                'stop_loss': risk.get('stop_loss'),
-                'take_profit': risk.get('take_profit'),
-                'trailing_stop': risk.get('trailing_stop'),
+                'stop_loss': d.get('stop_loss'),
+                'take_profit': d.get('take_profit', []),
+                'trailing_stop': d.get('trailing_stop'),
             },
             'sizing_status': 'READY',
-            'target_value': entry.get('target_position'),
+            'target_value': target_position,
             'target_quantity': None,
             'delta_value': None,
             'delta_quantity': None,
@@ -125,17 +126,17 @@ def classify_actions(snapshots: list[dict], sim_trades: list[dict], readiness: d
 
         # sizing（仅对 BUY/ADD/SELL/REDUCE 计算）
         if raw_action in (BUY, ADD, SELL, REDUCE):
-            ref_price = entry.get('entry_price') or entry.get('reference_price')
-            total_asset = portfolio.get('total_asset')
-            current_mv = portfolio.get('current_position_value') or portfolio.get('current_position')
-            cash = portfolio.get('cash')
+            ref_price = entry_price or target_position
+            total_asset = d.get('total_asset') or d.get('portfolio_total_asset')
+            current_mv = d.get('current_position_value') or d.get('current_position')
+            cash = d.get('cash')
             target_pct = None
             if raw_action == BUY:
-                target_pct = entry.get('target_position_pct') or 0.025
+                target_pct = d.get('target_position_pct') or 0.025
             elif raw_action == SELL:
                 target_pct = 0.0
             elif raw_action == REDUCE:
-                target_pct = entry.get('target_position_pct') or 0.0
+                target_pct = d.get('target_position_pct') or 0.0
 
             computed = False
             if total_asset is not None and ref_price and sizing_allowed:

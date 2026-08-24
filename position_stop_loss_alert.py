@@ -164,6 +164,7 @@ def build_position_decision(p, mkt, regime, permission, snap, total_capital=None
     使用 Real Portfolio Snapshot（真实数据），不读 simulation。"""
     if total_capital is None:
         total_capital = snap.get('portfolio', {}).get('total_asset') or TOTAL_CAPITAL
+    from decision.contract import EXIT_NONE
     from decision.engine import DecisionEngine
     from decision.adapters import position_ctx
     from decision.portfolio import assess_portfolio
@@ -183,6 +184,9 @@ def build_position_decision(p, mkt, regime, permission, snap, total_capital=None
                           drawdown=drawdown, drawdown_limit=0.15, drawdown_status=drawdown_status)
 
     eng = DecisionEngine(strategy='v1_double', config_version='phase1', code_version='real_portfolio_p55')
+    ref_p = p.get('current_price')
+    if ref_p is None and cur_price:
+        ref_p = cur_price
     ctx = position_ctx(
         symbol=code, name=name, regime_label=regime['label'], regime_score=regime['score'],
         permission=permission, permission_status=permission['status'],
@@ -194,13 +198,15 @@ def build_position_decision(p, mkt, regime, permission, snap, total_capital=None
         portfolio_snapshot_id=snap.get('snapshot_id', ''),
         portfolio_source=snap.get('source', ''),
         portfolio_as_of_time=snap.get('as_of_time', ''),
+        reference_price=ref_p if ref_p is not None else 0.0,
+        target_position=0.0 if exit_signal != EXIT_NONE else current_position,
     )
     dec = eng.decide(ctx)
     # 记录 execution + outcome，补全 lifecycle
     try:
-        from decision.execution import record_simulation_execution, record_sim_exit_and_outcome
-        entry_price = ctx.get('current_price', 0)
-        qty = ctx.get('quantity', 0)
+        from decision.execution import record_simulation_execution, record_sim_exit_and_outcome, _normalize_action
+        entry_price = p.get('current_price', 0)
+        qty = p.get('shares', 0)
         if qty > 0 and entry_price > 0:
             _d = {
                 'decision_id': dec.decision_id,
