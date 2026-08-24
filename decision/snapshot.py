@@ -27,6 +27,11 @@ def save_snapshot(decision: Decision, snap_dir: str = None, overwrite=False) -> 
     path = os.path.join(dirp, f"{decision.decision_id}.json")
     if os.path.exists(path) and not overwrite:
         return path  # 已存在不覆盖（历史不可变）
+    # 写入前清理过期 snapshot，避免目录无限膨胀
+    try:
+        prune_old_snapshots(days=30, snap_dir=dirp)
+    except Exception:
+        pass
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(d, f, ensure_ascii=False, indent=2)
     return path
@@ -47,6 +52,23 @@ def list_snapshots(snap_dir: str = None) -> list:
     if not os.path.isdir(dirp):
         return []
     return sorted(glob.glob(os.path.join(dirp, '*.json')))
+
+
+def prune_old_snapshots(days: int = 30, snap_dir: str = None) -> int:
+    """清理超过 days 天的 snapshot，返回删除数量。"""
+    dirp = snap_dir or SNAP_DIR
+    if not os.path.isdir(dirp):
+        return 0
+    cutoff = __import__('datetime').datetime.now().timestamp() - days * 86400
+    removed = 0
+    for fp in glob.glob(os.path.join(dirp, '*.json')):
+        try:
+            if os.path.getmtime(fp) < cutoff:
+                os.remove(fp)
+                removed += 1
+        except OSError:
+            pass
+    return removed
 
 
 def snapshot_exists(decision_id: str, snap_dir: str = None) -> bool:
