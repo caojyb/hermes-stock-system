@@ -499,8 +499,8 @@ def check_portfolio_drawdown_v2(conn_sim, force_report=False):
                 print(f"  [WARN] Decision Engine 异常，跳过减仓 {h['code']}: {_e}")
                 continue
             try:
-                from decision.execution import record_simulation_execution
-                record_simulation_execution(
+                from decision.execution import record_simulation_execution, record_sim_exit_and_outcome
+                eid = record_simulation_execution(
                     decision=_dec,
                     action='SELL',
                     entry_price=price,
@@ -510,6 +510,19 @@ def check_portfolio_drawdown_v2(conn_sim, force_report=False):
                     run_mode='SIMULATION',
                     environment='RISK_CONTROLLER'
                 )
+                # 补全 lifecycle：Exit Execution + Outcome
+                try:
+                    record_sim_exit_and_outcome(
+                        symbol=h['code'],
+                        exit_price=price,
+                        exit_quantity=h['buy_shares'],
+                        exit_reason='risk_controller_reduce',
+                        decision_id=_dec.decision_id,
+                        entry_execution_id=eid,
+                        exit_regime='RISK_CONTROLLER'
+                    )
+                except Exception as _out_e:
+                    print(f"  [WARN] outcome record failed for {h['code']}: {_out_e}")
             except Exception as _exec_e:
                 print(f"  [WARN] execution record failed for {h['code']}: {_exec_e}")
             cur.execute("""

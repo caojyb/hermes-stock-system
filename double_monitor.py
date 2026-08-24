@@ -93,6 +93,23 @@ def load_watch_list() -> list[dict]:
             'sector': r['sector'] or '',
             'entry_price': 0,
         })
+    # 从 simulation.db 补录真实买入价，避免止盈止损死代码
+    try:
+        sim_db = str(get_db_path('simulation'))
+        sim_con = sqlite3.connect(sim_db)
+        sim_cur = sim_con.cursor()
+        sim_cur.execute("""
+            SELECT code, buy_price FROM trades
+            WHERE status IN ('持有','部分止盈')
+              AND buy_price IS NOT NULL AND buy_price > 0
+        """)
+        entry_map = {row[0]: row[1] for row in sim_cur.fetchall()}
+        sim_con.close()
+        for s in watch_list:
+            if s['entry_price'] == 0 and s['code'] in entry_map:
+                s['entry_price'] = entry_map[s['code']]
+    except Exception:
+        pass
     con.close()
     return watch_list
 

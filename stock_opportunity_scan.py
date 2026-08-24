@@ -6,6 +6,7 @@
   - 候选股：indicators.signal_score >= 40 + rsi_14 < 50
   - 实时价格：新浪财经 API hq.sinajs.cn
   - 交叉验证：westock-data-skillhub（55个技术指标）
+  - 持仓对齐：simulation.db + Bitable 真实持仓
 有推荐时直接发飞书，不留本地文件
 """
 import sqlite3, urllib.request, json, os, sys, subprocess
@@ -129,6 +130,86 @@ def get_financial_filters(codes):
     return result
 
 
+# ── 读持仓（simulation.db + Bitable）────────────────────
+def get_holdings():
+    """
+    读取当前持仓，返回 {code: {name, source, buy_price, shares, ...}}
+    source = simulation / bitable
+    """
+    holdings = {}
+
+    # simulation.db
+    try:
+        _sim_path = None
+        try:
+            from simulation_db_helper import get_active_sim_db
+            _sim_path = get_active_sim_db()
+        except Exception:
+            pass
+        if not _sim_path:
+            from pathlib import Path
+            _sim_path = str(Path(__file__).resolve().parent.parent.parent.parent /
+                            'skills/stock/stock-expert/simulation.db')
+
+        conn = sqlite3.connect(_sim_path)
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT code, name, buy_price, buy_shares, status, signal_type, buy_date
+            FROM trades
+            WHERE status IN ('持有', '部分止盈')
+        """)
+        for r in cur.fetchall():
+            code, name, buy_price, shares, status, sig, buy_date = r
+            holdings[code] = {
+                'name': name or code,
+                'source': 'simulation',
+                'buy_price': float(buy_price or 0),
+                'shares': int(shares or 0),
+                'status': status,
+                'signal_type': sig or '',
+                'buy_date': str(buy_date or ''),
+            }
+        conn.close()
+    except Exception as e:
+        print(f"[WARN] 读取模拟仓失败: {e}")
+
+    # Bitable 真实持仓
+    try:
+        from pathlib import Path
+        _skill_dir = str(Path(__file__).resolve().parent.parent.parent /
+                         'skills/stock/stock-expert/skills/feishu-bitable')
+        sys.path.insert(0, _skill_dir)
+        from bitable_reader import BitableReader
+        reader = BitableReader(limit=100)
+        result = reader._execute_command()
+        data = json.loads(result.stdout)
+        fields = data['data']['fields']
+        records_raw = data['data']['data']
+        for raw in records_raw:
+            record = dict(zip(fields, raw))
+            status_field = record.get('是否买入', [])
+            if isinstance(status_field, list) and '已买入' in status_field:
+                code = str(record.get('股票ID', '')).strip()
+                name = str(record.get('name', '')).strip()
+                if not code or not name:
+                    continue
+                cost_price = float(record.get('买入价格', 0) or 0)
+                shares = int(record.get('持仓数量', 0) or 0)
+                if code not in holdings:
+                    holdings[code] = {
+                        'name': name,
+                        'source': 'bitable',
+                        'buy_price': cost_price,
+                        'shares': shares,
+                        'status': '已买入',
+                        'signal_type': '',
+                        'buy_date': str(record.get('买入日期', '') or ''),
+                    }
+    except Exception as e:
+        print(f"[WARN] 读取 Bitable 持仓失败: {e}")
+
+    return holdings
+
 # ── 读候选股票（indicators 表，每日刷新）─────────────────
 def get_candidates():
     """
@@ -163,17 +244,22 @@ def get_candidates():
 
 # ── 查新浪实时行情（含现价和涨跌幅）───────────────────────
 def get_sina_realtime(codes):
-    """返回 {code: {price, change_pct}}"""
+    """返回 {code: {price, change_pct}}，失败重试 3 次"""
     if not codes:
         return {}
     sina_codes = ",".join([f"{'sz' if c.startswith(('0','3')) else 'sh'}{c}" for c in codes])
     url = f"https://hq.sinajs.cn/list={sina_codes}"
-    try:
-        req = urllib.request.Request(url, headers={"Referer": "https://finance.sina.com.cn"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            text = resp.read().decode("gbk", errors="replace")
-    except Exception:
-        return {}
+    for attempt in range(3):
+        try:
+            req = urllib.request.Request(url, headers={"Referer": "https://finance.sina.com.cn"})
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                text = resp.read().decode("gbk", errors="replace")
+            if text.strip():
+                break
+        except Exception:
+            if attempt < 2:
+                continue
+            return {}
     result = {}
     seen = set()
     for line in text.strip().split("\n"):
@@ -291,7 +377,6 @@ POOL_DB = os.path.expanduser("~/.hermes/skills/stock/stock-expert/recommendation
 RECOMMEND_TRACK_DIR = os.path.expanduser("~/.hermes/cron/output")
 TRACK_JSON = os.path.join(RECOMMEND_TRACK_DIR, "opportunity_track_latest.json")
 
-
 # ── 发飞书消息 ────────────────────────────────────────────
 def send_feishu(text):
     if not FEISHU_TOKEN:
@@ -306,9 +391,8 @@ def send_feishu(text):
     except Exception as e:
         print(f"飞书推送失败: {e}\n{text}")
 
-
 # ── 推荐池追踪 ────────────────────────────────────────────
-def track_to_pool(alerts):
+def track_to_pool(alerts, source="intraday_scan"):
     """
     将盘中推荐记录到推荐池数据库
     """
@@ -359,13 +443,14 @@ def track_to_pool(alerts):
 
         max_pos = 5.0  # 默认5%仓位
 
-        # 检查是否已存在（相同代码+当天）
+        # 检查是否已存在（相同代码+当天+来源）
         cur.execute("""
             SELECT id FROM recommendations
-            WHERE code = ? AND entry_date = ? AND tier = ?
-        """, (code, today, tier))
+            WHERE code = ? AND entry_date = ? AND tier = ? AND notes LIKE ?
+        """, (code, today, tier, f"%source={source}%"))
         existing = cur.fetchone()
 
+        note_prefix = f"source={source}"
         if existing:
             # 更新
             cur.execute("""
@@ -381,7 +466,7 @@ def track_to_pool(alerts):
                 price * (1 + tp1_pct),
                 price * (1 + tp2_pct),
                 hold_days, max_pos, now_str,
-                f"score={score} rsi={rsi:.0f} confidence={confidence}",
+                f"{note_prefix} score={score} rsi={rsi:.0f} confidence={confidence}",
                 existing[0]
             ))
         else:
@@ -400,7 +485,7 @@ def track_to_pool(alerts):
                 price * (1 + tp2_pct),
                 hold_days, max_pos,
                 price, 'active',
-                f"score={score} rsi={rsi:.0f} confidence={confidence}",
+                f"{note_prefix} score={score} rsi={rsi:.0f} confidence={confidence}",
                 now_str, now_str
             ))
             tracked += 1
@@ -430,6 +515,9 @@ if __name__ == "__main__":
     if not candidates:
         sys.exit(0)
 
+    # 读持仓
+    holdings = get_holdings()
+
     codes = [c[0] for c in candidates]
 
     # 新浪实时行情（替换缓存中的昨日收盘价）
@@ -438,19 +526,12 @@ if __name__ == "__main__":
     # 基本面过滤（批量查询，排除垃圾股）
     fin_filters = get_financial_filters(codes)
     rejected = [c for c in codes if fin_filters.get(c, {}).get("reject", False)]
+    rejected_names = []
     if rejected:
-        rejected_names = []
-        for c in codes:
-            f = fin_filters.get(c, {})
+        for c in candidates:
+            f = fin_filters.get(c[0], {})
             if f.get("reject"):
-                # Handle 8-field tuple
-                for cand in candidates:
-                    if cand[0] == c:
-                        name = cand[1]
-                        break
-                else:
-                    name = c
-                rejected_names.append(f"{name}({c}):{f['reject_reason']}")
+                rejected_names.append(f"{c[1]}({c[0]}):{f['reject_reason']}")
 
     # 合并数据，筛选有效股票
     pre_alerts = []
@@ -459,7 +540,7 @@ if __name__ == "__main__":
         fin = fin_filters.get(code, {})
         if fin.get("reject", False):
             continue
-        sq_key = f"sz{code}" if code.startswith(("0", "3")) else f"sh{code}"
+        sq_key = f"sz{code}" if code.startswith(("0","3")) else f"sh{code}"
         q = sina_quotes.get(sq_key, {})
         # 优先用实时价，兜底缓存价
         price = q.get("price", cached_price or 0)
@@ -513,32 +594,66 @@ if __name__ == "__main__":
         a["confidence"] = confidence
         alerts.append(a)
 
+    # 双轨分组：持仓内 / 新候选
+    holding_alerts = []
+    new_alerts = []
+    for a in alerts:
+        if a["code"] in holdings:
+            holding_alerts.append(a)
+        else:
+            new_alerts.append(a)
+
     # 发飞书
-    if alerts:
-        lines = [f"【盘中推荐 · {datetime.now().strftime('%H:%M')}】"]
-        for a in sorted(alerts, key=lambda x: x["confidence"], reverse=True)[:5]:
+    lines = [f"【盘中推荐 · {datetime.now().strftime('%H:%M')}】"]
+    if holding_alerts:
+        lines.append("=== 持仓内信号 ===")
+        for a in sorted(holding_alerts, key=lambda x: x["confidence"], reverse=True)[:8]:
+            h = holdings[a["code"]]
+            buy_price = h.get('buy_price', 0)
+            price = a["price"]
+            pnl_pct = ((price - buy_price) / buy_price * 100) if buy_price > 0 else 0
+            stop_loss_pct = 7 if a["rsi"] < 30 else 5
+            stop_dist = ((price * (1 - stop_loss_pct/100) - price) / price * 100)
             rsi_flag = "⚠️" if a["rsi"] < 30 else "📉"
             w_signals = a.get("westock_signals", [])
             w_text = f" | {'、'.join(w_signals[:2])}" if w_signals else ""
-            # 基本面警告
             warnings = a.get("warnings", [])
-            w_text += f" | ⚠️{' '.join(warnings[:2])}" if warnings else ""
-            # 趋势信息
+            warn_text = f" | ⚠️{' '.join(warnings[:2])}" if warnings else ""
             trend = a.get("trend", "")
             trend_text = f" | 📈{trend}" if trend else ""
-            # P1-3：实时价缺失标注（新浪API不可用时使用昨日收盘价）
-            stale_text = " ⚠️实时价缺失,用昨日收盘价" if a.get("stale_price") else ""
+            stale_text = " ⚠️实时价缺失" if a.get("stale_price") else ""
+            lines.append(
+                f"{rsi_flag} {a['name']}({a['code']}) "
+                f"浮盈{pnl_pct:+.1f}% | 距止损{stop_dist:+.1f}% "
+                f"RSI={a['rsi']:.0f}{w_text}{warn_text}{trend_text}{stale_text}"
+            )
+
+    if new_alerts:
+        if holding_alerts:
+            lines.append("")
+        lines.append("=== 新候选 ===")
+        for a in sorted(new_alerts, key=lambda x: x["confidence"], reverse=True)[:5]:
+            rsi_flag = "⚠️" if a["rsi"] < 30 else "📉"
+            w_signals = a.get("westock_signals", [])
+            w_text = f" | {'、'.join(w_signals[:2])}" if w_signals else ""
+            warnings = a.get("warnings", [])
+            w_text += f" | ⚠️{' '.join(warnings[:2])}" if warnings else ""
+            trend = a.get("trend", "")
+            trend_text = f" | 📈{trend}" if trend else ""
+            stale_text = " ⚠️实时价缺失" if a.get("stale_price") else ""
             lines.append(
                 f"{rsi_flag} {a['name']}({a['code']}) "
                 f"评分{a['score']:.0f} | 现价{a['price']:.2f}({a['change_pct']:+.2f}%) "
                 f"RSI={a['rsi']:.0f}{w_text}{trend_text}{stale_text}"
             )
-        if rejected:
-            lines.append("")
-            lines.append(f"⛔ 基本面过滤排除 {len(rejected)} 只（仅展示前5）：")
-            for r in rejected_names[:5]:
-                lines.append(f"  - {r}")
-        send_feishu("\n".join(lines))
 
-        # 自动追踪到推荐池
-        track_to_pool(alerts)
+    if rejected:
+        lines.append("")
+        lines.append(f"⛔ 基本面过滤排除 {len(rejected)} 只（仅展示前5）：")
+        for r in rejected_names[:5]:
+            lines.append(f"  - {r}")
+
+    send_feishu("\n".join(lines))
+
+    # 自动追踪到推荐池（带 source 标记）
+    track_to_pool(alerts, source="intraday_scan")
