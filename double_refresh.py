@@ -13,6 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / 'skills/stock/stock-expert'))
 from stock_db_paths import get_db_path
+from simulation_db_helper import get_active_sim_db
 MARKET_DB = str(get_db_path('market_cache'))
 conn = sqlite3.connect(str(MARKET_DB))
 
@@ -215,7 +216,7 @@ if results:
         print(f"\n{'─'*65}")
         print(f"🏭 {sector}（{len(stocks)}只）")
         for s in stocks:
-            tr_str = f"换手{s['turnover']:.1f}%" if s['turnover'] else "换手N/A"
+            tr_str = f"换手{s['turnover']/10000:.1f}%" if s['turnover'] else "换手N/A"
             print(f"   {s['code']} {s['name']:10s} 市值{s['mcap']:>5.1f}亿 利润{s['profit_growth']:>6.1f}% {tr_str} 回撤{s['drawdown']:>4.1f}%")
 else:
     print("   当前无符合条件的股票")
@@ -354,7 +355,7 @@ if breakout_results:
         stocks = by_sector[sector]
         print(f"\n   🏭 {sector}（{len(stocks)}只）")
         for s in stocks:
-            tr_str = f"换手{s['turnover']:.1f}%" if s['turnover'] else "换手N/A"
+            tr_str = f"换手{s['turnover']/10000:.1f}%" if s['turnover'] else "换手N/A"
             print(f"      {s['code']} {s['name']:10s} 市值{s['mcap']:>5.1f}亿 利润{s['profit_growth']:>6.1f}% {tr_str}")
 else:
     print(f"\n   当前无右侧突破候选")
