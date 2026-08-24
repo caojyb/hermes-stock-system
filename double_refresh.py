@@ -88,20 +88,14 @@ cur.execute('''
 sector_ps_avg = {r[0]: r[1] for r in cur.fetchall()}
 
 def calc_turnover(code):
-    """计算换手率：优先用总股本，其次用indicators表"""
-    sinfo = stocks_info.get(code)
-    if sinfo:
-        ts = sinfo.get('total_shares_real')
-        if ts and ts > 0:
-            price = latest_prices.get(code, 0)
-            # 从K线取最近成交量
-            klines = kline_data.get(code, [])
-            if len(klines) >= 1:
-                # 用最近20天的平均成交量
-                recent = klines[-20:] if len(klines) >= 20 else klines
-                # 不会算成交量因为没有volume数据，用indicators的turnover_rate
-                pass
-    return indicator_tr.get(code, None)
+    """计算换手率：优先用总股本，其次从indicators表"""
+    raw = indicator_tr.get(code)
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
 
 # ═══ 2. 灵活版筛选 ═══
 print("\n📋 灵活版筛选（利润>0%, 换手>1%, 市值20-200亿, 主板+创业板）...")
