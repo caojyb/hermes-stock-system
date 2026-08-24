@@ -26,7 +26,6 @@ sys.path.insert(0, '/home/caojy/.hermes/skills/stock/stock-expert')
 from stock_db_paths import get_db_path
 
 MARKET_DB = str(get_db_path('market_cache'))
-SIM_DB = str(get_db_path('simulation_test' if os.environ.get('SIM_MODE') == 'test' else 'simulation'))
 
 # 飞书
 FEISHU_SENDER = str(SCRIPT_DIR.parent / 'skills/stock/stock-expert/skills/feishu-bitable/feishu_sender.py')
@@ -197,6 +196,42 @@ def build_position_decision(p, mkt, regime, permission, snap, total_capital=None
         portfolio_as_of_time=snap.get('as_of_time', ''),
     )
     dec = eng.decide(ctx)
+    # 记录 execution + outcome，补全 lifecycle
+    try:
+        from decision.execution import record_simulation_execution, record_sim_exit_and_outcome
+        entry_price = ctx.get('current_price', 0)
+        qty = ctx.get('quantity', 0)
+        if qty > 0 and entry_price > 0:
+            _d = {
+                'decision_id': dec.decision_id,
+                'symbol': dec.symbol,
+                'name': dec.name,
+                'reference_price': entry_price,
+                'target_position': qty * entry_price,
+                'reason_codes': list(dec.reason_codes),
+                'timestamp': getattr(dec, 'timestamp', ''),
+                'market_regime': getattr(dec, 'market_regime', '') or getattr(dec, 'regime_label', ''),
+            }
+            if _normalize_action(dec.action) in ('SELL', 'REDUCE', 'EXIT'):
+                eid = record_simulation_execution(
+                    decision=_d, action=dec.action, entry_price=entry_price,
+                    quantity=qty, position=0.0, status='CLOSED',
+                    run_mode='SIMULATION', environment='STOP_LOSS_ALERT')
+                try:
+                    record_sim_exit_and_outcome(
+                        symbol=dec.symbol, exit_price=entry_price, exit_quantity=qty,
+                        exit_reason='|'.join(dec.reason_codes) or 'stop_loss_alert',
+                        decision_id=dec.decision_id, entry_execution_id=eid,
+                        exit_regime=_d.get('market_regime', ''))
+                except Exception as _out_e:
+                    print(f"[WARN] outcome record failed for {dec.symbol}: {_out_e}")
+            else:
+                record_simulation_execution(
+                    decision=_d, action=dec.action, entry_price=entry_price,
+                    quantity=qty, position=0.0, status='EXECUTED',
+                    run_mode='SIMULATION', environment='STOP_LOSS_ALERT')
+    except Exception as _exec_e:
+        print(f"[WARN] execution record failed: {_exec_e}")
     snap_mod.save_snapshot(dec)
     return dec, reasons
 

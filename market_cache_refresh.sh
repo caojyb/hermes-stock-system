@@ -19,7 +19,8 @@ export MARKET_CACHE_QUIET=1
 
 # 捕获 python 的 stdout+stderr，失败时把错误详情推送到飞书
 OUT=$(mktemp)
-if python3 market_cache.py incremental >"$OUT" 2>&1; then
+mkdir -p ~/.hermes/cron/output/a6a60497fbb6
+if python3 market_cache.py incremental >"$OUT" 2>&1 | tee -a ~/.hermes/cron/output/a6a60497fbb6/latest.md; then
     cat "$OUT"
     log "✅ 增量更新成功"
     echo "✅ market_cache incremental 完成"

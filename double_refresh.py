@@ -134,7 +134,7 @@ for code in fin_data:
     price = latest_prices.get(code)
     if not price or price <= 0: continue
     mcap = estimate_mcap(code, price)
-    if mcap < 20 or mcap > 200: continue  # 灵活版：市值20-200亿
+    if mcap < 18 or mcap > 210: continue  # 20-200亿 ±5% 边缘容差  # 灵活版：市值20-200亿
     
     pe = pe_data.get(code)
     if pe:
@@ -317,7 +317,7 @@ for code in fin_data:
     price = latest_prices.get(code)
     if not price or price <= 0: continue
     mcap = estimate_mcap(code, price)
-    if mcap < 20 or mcap > 200: continue
+    if mcap < 18 or mcap > 210: continue  # 20-200亿 ±5% 边缘容差
     
     pe = pe_data.get(code)
     if pe:
@@ -386,7 +386,7 @@ for code in old_pool:
             if fin['dr1'] is None or fin['dr1'] >= 65: reasons.append('负债率>65%')
         price = latest_prices.get(code, 0)
         mcap = estimate_mcap(code, price)
-        if mcap < 20 or mcap > 200: reasons.append(f'市值{mcap:.0f}亿不在20-200亿')
+        if mcap < 18 or mcap > 210: reasons.append  # 20-200亿 ±5% 边缘容差(f'市值{mcap:.0f}亿不在20-200亿')
         pe = pe_data.get(code)
         if pe and pe.get('pe_pct') is not None and pe['pe_pct'] >= 40: reasons.append('PE分位>=40%')
         tr = calc_turnover(code)

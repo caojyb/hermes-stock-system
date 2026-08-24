@@ -21,11 +21,22 @@ def to_westock(code):
 def read_holdings_codes():
     out = subprocess.run(['lark-cli','base','+record-list','--base-token',BT_APP,
                           '--table-id',BT_TABLE], capture_output=True, text=True, timeout=60).stdout
-    codes = re.findall(r'\|\s*(\d{6})\s*\|', out)
+    lines = [l.strip() for l in out.splitlines() if '|' in l and '---' not in l]
+    if not lines:
+        raise RuntimeError(f"fetch_holdings_westock: lark-cli 返回空表格，输出可能已变更。原始输出前200字符: {out[:200]!r}")
+    # 字段漂移保护：从表头定位 CODE 列索引
+    header = [h.strip() for h in lines[0].split('|') if h.strip()]
+    code_idx = next((i for i, h in enumerate(header) if '代码' in h or h == 'CODE'), 0)
+    codes = []
+    for line in lines[1:]:
+        parts = [p.strip() for p in line.split('|') if p.strip()]
+        if len(parts) <= code_idx:
+            continue
+        c = parts[code_idx]
+        if len(c) == 6 and c.isdigit():
+            codes.append(c)
     if not codes:
-        raise RuntimeError(f"fetch_holdings_westock: lark-cli 返回空代码列表，输出可能已变更。原始输出前200字符: {out[:200]!r}")
-    if not all(len(c) == 6 and c.isdigit() for c in codes):
-        raise RuntimeError(f"fetch_holdings_westock: 提取到非6位代码: {codes}")
+        raise RuntimeError(f"fetch_holdings_westock: 未解析到有效代码。表头={header}，原始输出前200字符: {out[:200]!r}")
     return codes
 
 def run_westock(cmd, code):

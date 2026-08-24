@@ -1055,6 +1055,26 @@ try:
          round(trp, 2), round(drawdown, 2), win_cnt, loss_cnt))
     sim_conn.commit()
 
+    # 本地输出落盘（no_agent 可观测性）
+    try:
+        import json as _json, os as _os
+        _out_dir = _os.path.expanduser('~/.hermes/cron/output/db39df50d53e')
+        _os.makedirs(_out_dir, exist_ok=True)
+        _out = {
+            'date': today_str,
+            'total_value': round(tv, 2),
+            'cash': round(cash, 2),
+            'holdings_value': round(holdings_value, 2),
+            'total_return_pct': round(trp, 2),
+            'max_drawdown_pct': round(drawdown, 2),
+            'win_count': win_cnt,
+            'loss_count': loss_cnt,
+        }
+        with open(_os.path.join(_out_dir, f'{today_str}.json'), 'w', encoding='utf-8') as _f:
+            _json.dump(_out, _f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
     # 今日交易
     today_str = date.today().isoformat()
     sim_cur.execute("SELECT code, name, status, buy_price, profit_pct FROM trades WHERE buy_date=?", (today_str,))
