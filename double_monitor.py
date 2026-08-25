@@ -747,9 +747,9 @@ for code, h in list(open_map.items()):
         profit = (curr_price - h['buy_price']) * h['shares']
         profit_pct = ret * 100
         sim_cur.execute("""
-            UPDATE trades SET sell_date=?, sell_price=?, sell_amount=?, profit_pct=?, profit_amount=?, status=?
+            UPDATE trades SET sell_date=?, sell_price=?, sell_amount=?, profit_pct=?, profit_amount=?, status=?, exit_reason=?
             WHERE code=? AND status IN ('持有','部分止盈')
-        """, (today_str, curr_price, sell_amount, profit_pct, profit, '止损', code))
+        """, (today_str, curr_price, sell_amount, profit_pct, profit, '止损', 'STOP_LOSS', code))
         print(f"  🔴 止损 {code} {h['name']}: {h['buy_price']:.2f}->{curr_price:.2f} ({profit_pct:.1f}%) | {_dec.decision_id}")
         # Phase 6.6: Exit Execution + Outcome Closure（不改退出触发/参数，只归口 lifecycle）
         try:
@@ -780,9 +780,9 @@ for code, h in list(open_map.items()):
         profit = (curr_price - h['buy_price']) * h['shares']
         profit_pct = ret * 100
         sim_cur.execute("""
-            UPDATE trades SET sell_date=?, sell_price=?, sell_amount=?, profit_pct=?, profit_amount=?, status=?
+            UPDATE trades SET sell_date=?, sell_price=?, sell_amount=?, profit_pct=?, profit_amount=?, status=?, exit_reason=?
             WHERE code=? AND status IN ('持有','部分止盈')
-        """, (today_str, curr_price, sell_amount, profit_pct, profit, '清仓止盈', code))
+        """, (today_str, curr_price, sell_amount, profit_pct, profit, '清仓止盈', 'TAKE_PROFIT', code))
         print(f"  🟢 止盈 {code} {h['name']}: {h['buy_price']:.2f}->{curr_price:.2f} ({profit_pct:.1f}%) | {_dec.decision_id}")
         # Phase 6.6: Exit Execution + Outcome Closure（不改退出触发/参数，只归口 lifecycle）
         try:
@@ -935,9 +935,9 @@ if new_entry_ok and current_count < 20 and IS_TRADING_DAY:
             print(f"  ⛔ NO_TRADE {code} {name}: {','.join(dec.reason_codes)}")
             continue
         sim_cur.execute("""
-            INSERT INTO trades (code, name, sector, buy_date, buy_price, buy_shares, buy_amount, status, signal_type, hold_mode, strategy)
-            VALUES (?, ?, ?, ?, ?, ?, ?, '持有', ?, 'normal', ?)
-        """, (code, name, stock.get('sector',''), today_str, entry_price, shares, buy_amount, '+'.join(stock.get('signals',[])), DEFAULT_STRATEGY))
+            INSERT INTO trades (code, name, sector, buy_date, buy_price, buy_shares, buy_amount, status, signal_type, hold_mode, strategy, decision_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, '持有', ?, 'normal', ?, ?)
+        """, (code, name, stock.get('sector',''), today_str, entry_price, shares, buy_amount, '+'.join(stock.get('signals',[])), DEFAULT_STRATEGY, dec.decision_id))
         available_cash -= buy_amount
         print(f"  🟢 买入 {code} {name}: {entry_price:.2f} x {shares}股 = {buy_amount:.0f}元 | {dec.decision_id}")
         # Phase 6.5: 模拟执行写入 Execution Record（关联 decision_id，不静默丢失）
@@ -1013,10 +1013,11 @@ print(f"📊 【模拟仓每日摘要】{today_str}")
 print(f"{'─'*50}")
 try:
     # ── 实时结算（不再读陈旧快照：portfolio_snapshots 无进程更新，改用现价实时计算）──
-    # 现金 = 初始资金 - 当前持仓成本 + 累计卖出回款
+    # 现金 = 初始资金 + 已实现盈亏 - 当前持仓成本
     open_pos_for_cash = sim_cur.execute("SELECT buy_shares, buy_price FROM trades WHERE status IN ('持有','部分止盈')").fetchall()
-    all_sold = sim_cur.execute("SELECT COALESCE(SUM(sell_amount),0) FROM trades WHERE sell_date IS NOT NULL").fetchone()[0]
-    cash = TOTAL_CAPITAL - sum((shares or 0) * (price or 0) for shares, price in open_pos_for_cash) + all_sold
+    realized_pnl = sim_cur.execute("SELECT COALESCE(SUM(sell_amount - buy_amount),0) FROM trades WHERE sell_date IS NOT NULL").fetchone()[0]
+    open_cost = sum((shares or 0) * (price or 0) for shares, price in open_pos_for_cash)
+    cash = TOTAL_CAPITAL + float(realized_pnl) - float(open_cost)
     # 风控减仓后再刷新一次，避免刚减仓后现金仍被低估
 
     # 当前持仓市值 + 浮盈分布（现价 × 股数）
@@ -1106,9 +1107,10 @@ try:
         if rc_action and rc_action != 'none':
             print(f"   组合回撤风控: 触发 action={rc_action}")
             # 风控减仓后重新计算现金
-            all_sold = sim_cur.execute("SELECT COALESCE(SUM(sell_amount),0) FROM trades WHERE sell_date IS NOT NULL").fetchone()[0]
             open_pos_for_cash = sim_cur.execute("SELECT buy_shares, buy_price FROM trades WHERE status IN ('持有','部分止盈')").fetchall()
-            cash = TOTAL_CAPITAL - sum((shares or 0) * (price or 0) for shares, price in open_pos_for_cash) + all_sold
+            realized_pnl = sim_cur.execute("SELECT COALESCE(SUM(sell_amount - buy_amount),0) FROM trades WHERE sell_date IS NOT NULL").fetchone()[0]
+            open_cost = sum((shares or 0) * (price or 0) for shares, price in open_pos_for_cash)
+            cash = TOTAL_CAPITAL + float(realized_pnl) - float(open_cost)
             print(f"   [RC-REFRESH] 风控后现金={cash:.0f}")
     except Exception as e:
         print(f"   [WARN] 组合回撤风控检查失败: {e}")

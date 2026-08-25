@@ -67,8 +67,7 @@ def load_today_sim_trades(today: str | None = None, sim_db: str | None = None) -
         cur = con.cursor()
         cur.execute("""
             SELECT code, name, sector, buy_date, buy_price, buy_shares, buy_amount,
-                    sell_date, sell_price, sell_amount, status, signal_type, strategy,
-                    decision_id, exit_reason
+                    sell_date, sell_price, sell_amount, status, signal_type, strategy
             FROM trades
             WHERE buy_date=? OR sell_date=?
         """, (today, today))
