@@ -8,10 +8,12 @@
   python3 double_monitor.py                    # 正常扫描
   python3 double_monitor.py --force-sell       # 强制输出所有持仓状态
 """
-import os, sys, json, sqlite3, requests, time
+import os, sys, json, sqlite3, requests, time, socket
 from datetime import date, datetime, timedelta
 from collections import defaultdict
 from pathlib import Path
+
+socket.setdefaulttimeout(10)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / 'skills/stock/stock-expert'))
 from stock_db_paths import get_db_path

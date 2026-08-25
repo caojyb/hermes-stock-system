@@ -299,6 +299,15 @@ def build_daily_report(today: str | None = None) -> dict:
 
     summary = build_decision_summary(actions)
     if not summary.get('total_decisions') and not snapshots:
+        try:
+            from trading_calendar import classify_trading_day
+            td_status, _ = classify_trading_day()
+            if td_status == 'NO':
+                market_status = 'NON_TRADING_DAY'
+            else:
+                market_status = 'NO_SIGNAL'
+        except Exception:
+            market_status = 'NO_SIGNAL'
         summary = {
             'total_decisions': 0,
             'buy_count': 0,
@@ -308,7 +317,7 @@ def build_daily_report(today: str | None = None) -> dict:
             'sell_count': 0,
             'no_trade_count': 0,
             'trace': [],
-            'market_status': 'NON_TRADING_DAY_OR_NO_DECISION',
+            'market_status': market_status,
         }
 
     report = {
