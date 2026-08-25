@@ -82,16 +82,21 @@ def check_data_layer():
     except Exception as e:
         add('财务数据报告期', False, f'查询异常: {e}', 'critical')
 
-    # 4. PE/PB 最新日期
+    # 4. PE/PB 最新日期（PE/PB 为周度快照，仅交易日且滞后 >7 天时告警）
     try:
         cur.execute("SELECT MAX(fetch_date) FROM pe_pb_data")
         row = cur.fetchone()
         if row and row[0]:
             max_fetch = dt.strptime(row[0], '%Y-%m-%d').date()
             days_lag = (TODAY - max_fetch).days
-            is_fresh = days_lag <= 10
+            # 周度快照：仅交易日告警，且滞后 >7 天
+            from trading_calendar import is_weekday
+            is_trading = is_weekday(TODAY)
+            threshold = 7 if is_trading else 999
+            is_fresh = days_lag <= threshold
             add('PE/PB数据日期', is_fresh,
-                f'最新={row[0]}, 滞后{days_lag}天', 'warn' if not is_fresh else 'info')
+                f'最新={row[0]}, 滞后{days_lag}天' + ('' if is_trading else '(周日运行，跳过周度快照告警)'),
+                'warn' if not is_fresh else 'info')
         else:
             add('PE/PB数据日期', False, 'pe_pb_data 为空', 'warn')
     except Exception as e:

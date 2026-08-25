@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-心跳监控模块 v1.0 — 系统健康检查
+心跳监控模块 v2.0 — 系统健康检查
 ===================================
 每天 09:00 和 15:00 由 cron 触发，检查：
 1. 数据库连接是否正常
-2. MCP 行情服务是否可达
-3. 飞书 webhook 是否可用
+2. MCP 行情服务数据时效性
+3. Hindsight HTTP /health 状态
+4. 飞书 webhook 连通性（TCP connect，不发送真实消息）
 
-如果连续 2 次失败，在本地日志记录告警。
+如果连续 3 次失败，在本地日志记录告警。
 """
-import os, sys, json, sqlite3, time
+import os, sys, json, sqlite3, socket, time
 from datetime import datetime
 from pathlib import Path
 
@@ -18,10 +19,9 @@ LOG_FILE = SCRIPT_DIR / "heartbeat.log"
 STATE_FILE = SCRIPT_DIR / "heartbeat_state.json"
 MARKET_DB = "/home/caojy/.hermes/skills/stock/stock-expert/market_cache.db"
 
-# 飞书 webhook（生产环境替换为真实地址）
+# 飞书 webhook（仅用于 TCP 连通性测试，不发送消息）
 FEISHU_WEBHOOK = "https://open.feishu.cn/open-apis/bot/v2/hook/emergency"
 
-# 备用告警（本地文件 + stderr）
 BACKUP_ALERT = str(SCRIPT_DIR / "heartbeat_alert.log")
 
 
@@ -80,23 +80,32 @@ def check_mcp():
         return False, str(e)
 
 
-def check_webhook():
-    """检查飞书 webhook 可用性（仅测试连接，不发送消息）"""
+def check_hindsight():
+    """检查 Hindsight HTTP /health（不依赖 webhook，用本地 daemon）"""
     try:
-        import urllib.request
-        # 只检查域名解析和连接，不发送实际消息
-        req = urllib.request.Request(FEISHU_WEBHOOK, method="POST")
-        req.add_header("Content-Type", "application/json")
-        # 发送一个空测试（webhook会返回错误但不影响计数）
-        data = json.dumps({"msg_type": "text", "content": {"text": "__heartbeat_test__"}}).encode()
-        resp = urllib.request.urlopen(req, data=data, timeout=10)
-        return True, f"HTTP {resp.status}"
+        sock = socket.create_connection(("127.0.0.1", 9177), timeout=5)
+        sock.sendall(b"GET /health HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n")
+        resp = sock.recv(4096).decode(errors="replace")
+        sock.close()
+        if '"status":"healthy"' in resp or "200 OK" in resp:
+            return True, "Hindsight /health reachable"
+        return False, f"Hindsight unhealthy: {resp[:80]}"
     except Exception as e:
-        # webhook 返回 4xx 意味着服务可达但请求格式错误（正常）
-        err_str = str(e)
-        if "400" in err_str or "401" in err_str:
-            return True, "服务可达(返回预期错误)"
-        return False, err_str
+        return False, f"Hindsight unreachable: {e}"
+
+
+def check_webhook():
+    """检查飞书 webhook 连通性（TCP connect，不发送真实消息）"""
+    try:
+        # 从 URL 解析 host:port
+        url = FEISHU_WEBHOOK.replace("https://", "").replace("http://", "").split("/")[0]
+        host, port = url.split(":") if ":" in url else (url, 443)
+        port = int(port)
+        sock = socket.create_connection((host, port), timeout=10)
+        sock.close()
+        return True, f"TCP connect {host}:{port} OK"
+    except Exception as e:
+        return False, f"webhook TCP failed: {e}"
 
 
 def send_backup_alert(failures):
@@ -129,7 +138,14 @@ def main():
         all_ok = False
         log(f"  ❌ MCP行情: {msg}", "ERROR")
 
-    # 3. 飞书 webhook
+    # 3. Hindsight
+    ok, msg = check_hindsight()
+    results["hindsight"] = {"status": "OK" if ok else "FAIL", "message": msg}
+    if not ok:
+        all_ok = False
+        log(f"  ❌ Hindsight: {msg}", "ERROR")
+
+    # 4. 飞书 webhook
     ok, msg = check_webhook()
     results["webhook"] = {"status": "OK" if ok else "FAIL", "message": msg}
     if not ok:
@@ -146,8 +162,8 @@ def main():
         state["last_failure"] = datetime.now().isoformat()
         log(f"⚠️ {state['consecutive_failures']} 次连续失败", "WARNING")
 
-    # 连续 2 次失败 → 备用告警
-    if state["consecutive_failures"] >= 2:
+    # 连续 3 次失败 → 备用告警
+    if state["consecutive_failures"] >= 3:
         send_backup_alert(state["consecutive_failures"])
         log(f"🚨 连续{state['consecutive_failures']}次失败，已写入备用告警", "ALERT")
 
