@@ -501,7 +501,7 @@ def check_portfolio_drawdown_v2(conn_sim, force_report=False):
             try:
                 from decision.execution import record_simulation_execution, record_sim_exit_and_outcome
                 eid = record_simulation_execution(
-                    decision=_dec,
+                    decision=_dec.freeze(),
                     action='SELL',
                     entry_price=price,
                     quantity=h['buy_shares'],

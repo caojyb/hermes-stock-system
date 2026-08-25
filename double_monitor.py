@@ -709,6 +709,7 @@ open_rows = sim_cur.fetchall()
 open_map = {r[0]: {'name': r[1], 'buy_date': r[2], 'buy_price': float(r[3]), 'shares': int(r[4]), 'status': r[5]} for r in open_rows}
 
 # 1. 卖出检查
+print(f"[BRANCH] ENTER_SELL_CHECK open_count={len(open_map)}")
 for code, h in list(open_map.items()):
     cur_mkt = conn.cursor()
     cur_mkt.execute("SELECT close, high FROM klines WHERE code=? ORDER BY date DESC LIMIT 1", (code,))
@@ -730,6 +731,7 @@ for code, h in list(open_map.items()):
     retrace = (recent_high - curr_price) / recent_high if recent_high > 0 else 0
 
     if ret <= -STOP_LOSS:
+        print(f"[BRANCH] STOP_LOSS_BRANCH code={code} ret={ret*100:.1f}%")
         # ── Phase 2: Decision Engine 归一 SELL + 冻结（Exit 不依赖 new_entry 权限）──
         try:
             _sig, _trig = norm_exit_signal(ret, peak_ret, retrace, stop_loss=STOP_LOSS,
@@ -763,6 +765,7 @@ for code, h in list(open_map.items()):
         continue
 
     if peak_ret >= TP1 and retrace >= PEAK_RETRACE:
+        print(f"[BRANCH] TAKE_PROFIT_BRANCH code={code} peak_ret={peak_ret*100:.1f}% retrace={retrace*100:.1f}%")
         # ── Phase 2: Decision Engine 归一 SELL + 冻结 ──
         try:
             _sig, _trig = norm_exit_signal(ret, peak_ret, retrace, stop_loss=STOP_LOSS,
@@ -859,6 +862,7 @@ except Exception as _e:
     print(f"  组合行业统计异常: {_e}")
 
 if new_entry_ok and current_count < 20 and IS_TRADING_DAY:
+    print(f"[BRANCH] ENTER_BUY_LOOP new_entry_ok=1 current_count={current_count}")
     buy_candidates = []
     for stock in WATCH_LIST:
         code = stock['code']
@@ -934,6 +938,7 @@ if new_entry_ok and current_count < 20 and IS_TRADING_DAY:
         if dec.action != 'BUY':
             print(f"  ⛔ NO_TRADE {code} {name}: {','.join(dec.reason_codes)}")
             continue
+        print(f"[BRANCH] BUY_EXEC code={code} name={name} shares={shares} amount={buy_amount:.0f} decision_id={dec.decision_id}")
         sim_cur.execute("""
             INSERT INTO trades (code, name, sector, buy_date, buy_price, buy_shares, buy_amount, status, signal_type, hold_mode, strategy, decision_id)
             VALUES (?, ?, ?, ?, ?, ?, ?, '持有', ?, 'normal', ?, ?)
@@ -1011,6 +1016,7 @@ except Exception as e:
 print(f"\n{'─'*50}")
 print(f"📊 【模拟仓每日摘要】{today_str}")
 print(f"{'─'*50}")
+print(f"[BRANCH] ENTER_SUMMARY")
 try:
     # ── 实时结算（不再读陈旧快照：portfolio_snapshots 无进程更新，改用现价实时计算）──
     # 现金 = 初始资金 + 已实现盈亏 - 当前持仓成本
@@ -1099,12 +1105,14 @@ try:
         print(f"  今日交易: 无")
 
     # ── 组合回撤风控（自动执行：净值回撤超线则减仓至50%，按真实收盘价）──
+    print(f"[BRANCH] ENTER_RISK_CONTROL")
     try:
         from risk_controller_v2 import check_portfolio_drawdown_v2
         rc_action, rc_msgs = check_portfolio_drawdown_v2(sim_conn)
         for rc_m in rc_msgs:
             print(f"   🚨 {rc_m}")
         if rc_action and rc_action != 'none':
+            print(f"[BRANCH] RISK_CONTROL_EXEC action={rc_action}")
             print(f"   组合回撤风控: 触发 action={rc_action}")
             # 风控减仓后重新计算现金
             open_pos_for_cash = sim_cur.execute("SELECT buy_shares, buy_price FROM trades WHERE status IN ('持有','部分止盈')").fetchall()
@@ -1148,6 +1156,7 @@ if PIPELINE_AVAILABLE:
         print(f'  [PIPELINE] 状态记录失败: {e}')
 
 # Phase 8-E.1: 生成 Primary / Secondary 报告，不反向影响 Decision
+print(f"[BRANCH] ENTER_REPORT")
 try:
     from decision.daily_decision_contract import build_daily_report, save_daily_report
     try:
