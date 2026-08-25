@@ -527,9 +527,9 @@ def check_portfolio_drawdown_v2(conn_sim, force_report=False):
                 print(f"  [WARN] execution record failed for {h['code']}: {_exec_e}")
             cur.execute("""
                 UPDATE trades SET sell_date=?, sell_price=?, sell_amount=?, status='减仓',
-                profit_pct=?, profit_amount=?
+                profit_pct=?, profit_amount=?, decision_id=?, exit_reason=?
                 WHERE id=?
-            """, (today, price, sell_amount, profit_pct, profit, h['id']))
+            """, (today, price, sell_amount, profit_pct, profit, _dec.decision_id, 'RISK_CONTROLLER_TRIM', h['id']))
             sell_value += sell_amount
             sold_count += 1
         mkt.close()
