@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-心跳监控模块 v2.0 — 系统健康检查
+心跳监控模块 v3.0 — 系统健康检查
 ===================================
 每天 09:00 和 15:00 由 cron 触发，检查：
 1. 数据库连接是否正常
-2. MCP 行情服务数据时效性
+2. K线数据时效性（替代MCP行情，更直接）
 3. Hindsight HTTP /health 状态
-4. 飞书 webhook 连通性（TCP connect，不发送真实消息）
+4. 飞书 webhook TCP 连通性（不发送真实消息）
 
-如果连续 3 次失败，在本地日志记录告警。
+连续 3 次失败 → 写入本地告警文件 + 输出到 stderr 供 cron 捕获推送。
 """
 import os, sys, json, sqlite3, socket, time
 from datetime import datetime
@@ -61,9 +61,11 @@ def check_db():
         return False, str(e)
 
 
-def check_mcp():
-    """检查 MCP 行情服务（通过本地数据库查询验证数据时效性）"""
+def check_kline_freshness():
+    """检查K线数据时效性（替代原来的MCP行情检查）"""
     try:
+        if not os.path.exists(MARKET_DB):
+            return False, "数据库不存在"
         conn = sqlite3.connect(MARKET_DB)
         cur = conn.execute("SELECT MAX(date) FROM klines")
         row = cur.fetchone()
@@ -81,7 +83,7 @@ def check_mcp():
 
 
 def check_hindsight():
-    """检查 Hindsight HTTP /health（不依赖 webhook，用本地 daemon）"""
+    """检查 Hindsight HTTP /health"""
     try:
         sock = socket.create_connection(("127.0.0.1", 9177), timeout=5)
         sock.sendall(b"GET /health HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n")
@@ -95,9 +97,8 @@ def check_hindsight():
 
 
 def check_webhook():
-    """检查飞书 webhook 连通性（TCP connect，不发送真实消息）"""
+    """检查飞书 webhook TCP 连通性（不发送真实消息）"""
     try:
-        # 从 URL 解析 host:port
         url = FEISHU_WEBHOOK.replace("https://", "").replace("http://", "").split("/")[0]
         host, port = url.split(":") if ":" in url else (url, 443)
         port = int(port)
@@ -109,12 +110,13 @@ def check_webhook():
 
 
 def send_backup_alert(failures):
-    """发送备用告警（写入本地文件）"""
+    """连续失败时写入本地告警文件 + 输出到 stderr"""
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    msg = f"\n{'='*60}\n[{ts}] 🚨 心跳检测连续 {failures} 次失败\n{'='*60}\n"
     with open(BACKUP_ALERT, "a") as f:
-        f.write(f"\n{'='*60}\n")
-        f.write(f"[{ts}] 🚨 心跳检测连续 {failures} 次失败\n")
-        f.write(f"{'='*60}\n")
+        f.write(msg)
+    # 同时输出到 stderr，供 cron 捕获
+    print(msg, file=sys.stderr)
 
 
 def main():
@@ -131,12 +133,12 @@ def main():
         all_ok = False
         log(f"  ❌ 数据库: {msg}", "ERROR")
 
-    # 2. MCP 行情
-    ok, msg = check_mcp()
-    results["mcp"] = {"status": "OK" if ok else "FAIL", "message": msg}
+    # 2. K线时效性（替代MCP行情）
+    ok, msg = check_kline_freshness()
+    results["kline"] = {"status": "OK" if ok else "FAIL", "message": msg}
     if not ok:
         all_ok = False
-        log(f"  ❌ MCP行情: {msg}", "ERROR")
+        log(f"  ❌ K线时效: {msg}", "ERROR")
 
     # 3. Hindsight
     ok, msg = check_hindsight()
@@ -145,7 +147,7 @@ def main():
         all_ok = False
         log(f"  ❌ Hindsight: {msg}", "ERROR")
 
-    # 4. 飞书 webhook
+    # 4. 飞书 webhook TCP
     ok, msg = check_webhook()
     results["webhook"] = {"status": "OK" if ok else "FAIL", "message": msg}
     if not ok:
@@ -170,7 +172,7 @@ def main():
     save_state(state)
     log(f"❤️ 心跳检测完成\n")
 
-    # 输出JSON结果（供cron解析）
+    # 输出 JSON 结果（供 cron 解析）
     print(json.dumps(results, ensure_ascii=False))
 
 

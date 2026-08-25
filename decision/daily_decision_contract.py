@@ -301,11 +301,14 @@ def build_daily_report(today: str | None = None) -> dict:
     if not summary.get('total_decisions') and not snapshots:
         try:
             from trading_calendar import classify_trading_day
-            td_status, _ = classify_trading_day()
-            if td_status == 'NO':
+            td = classify_trading_day()
+            trading_day = td.get('trading_day', 'UNKNOWN')
+            if trading_day == 'NO':
                 market_status = 'NON_TRADING_DAY'
-            else:
+            elif trading_day == 'YES':
                 market_status = 'NO_SIGNAL'
+            else:
+                market_status = 'UNKNOWN'
         except Exception:
             market_status = 'NO_SIGNAL'
         summary = {
