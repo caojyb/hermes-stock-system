@@ -80,25 +80,47 @@ def _check_A_decision_integrity(validation_date: str) -> dict:
 
 
 def _check_B_data_freshness(validation_date: str) -> dict:
-    """B. Data Freshness：kline/cache 必须在 trading day 当日或前一交易日。"""
+    """B. Data Freshness：kline/cache 必须在 trading day 当日或前一交易日。
+
+    关键：任何查询异常 / 表不存在 / 无法取得 latest 日期，必须显式标记
+    status=UNKNOWN 并置 freshness_unverified=True，不得静默归为 READY。
+    汇总层会据此将 UNKNOWN 升级为 DEGRADED（而非静默 CLEAN）。
+    """
     mc = KNOWN_PRODUCTION_DBS['market_cache']
     status = 'READY'
     latest_kline = None
-    if os.path.exists(mc):
+    unverified = False
+    error = None
+    if not os.path.exists(mc):
+        status = 'UNKNOWN'
+        unverified = True
+        error = 'market_cache.db not found'
+    else:
         try:
             con = sqlite3.connect(mc)
-            r = con.execute("SELECT MAX(date) FROM klines_daily LIMIT 1").fetchone()
+            # 真实表名为 klines（非 klines_daily）
+            r = con.execute("SELECT MAX(date) FROM klines LIMIT 1").fetchone()
             latest_kline = r[0] if r else None
             con.close()
-        except Exception:
+            if latest_kline is None:
+                status = 'UNKNOWN'
+                unverified = True
+                error = 'no kline rows'
+        except Exception as e:
             status = 'UNKNOWN'
+            unverified = True
+            error = f'query failed: {e}'
     if latest_kline and latest_kline < validation_date:
         status = 'STALE'
+        unverified = True  # STALE 也属未通过新鲜度校验
     return {
         'market_cache_latest': latest_kline,
         'validation_date': validation_date,
         'status': status,
+        'freshness_unverified': unverified,
+        'error': error,
         'stale_treated_as_ready': False,  # 受控：stale 不默认 READY
+        'verified_by': 'runtime query (klines table)',
     }
 
 
@@ -158,13 +180,21 @@ def _check_E_task_chain() -> dict:
     return {
         'required_chain_present': not missing,
         'missing_components': missing,
-        'downstream_consumes_correct_data': True,  # K0 已审计
+        # 以下两项为 K0 审计结论的依赖项，非实时运行时验证（已标注）
+        'downstream_consumes_correct_data': True,
+        'downstream_consumes_correct_data_verified_by': 'K0 task-chain audit (static)',
         'stale_data_detectable': True,
+        'stale_data_detectable_verified_by': 'K0/K3 audit (static)',
     }
 
 
 def _check_F_persistence(validation_date: str) -> dict:
-    """F. Decision Persistence：K1 root cause 状态 + 隔离证明。"""
+    """F. Decision Persistence：K1 root cause 状态 + 隔离证明。
+
+    注意：PERSISTENCE_FAILED 为运行时实测（扫描 snapshots）；
+    而 5 项隔离证明为 K1 设计与测试的依赖项结论，非每次运行时实时验证，
+    已逐条标注 verified_by，避免 gate 自证。
+    """
     snap_dir = Path(SCRIPT_DIR, 'decision', 'snapshots')
     failed = 0
     if snap_dir.exists():
@@ -176,13 +206,19 @@ def _check_F_persistence(validation_date: str) -> dict:
             if d.get('timestamp', '')[:10] == validation_date and d.get('persistence_status') == 'FAILED':
                 failed += 1
     return {
-        'PERSISTENCE_FAILED': failed,
+        'PERSISTENCE_FAILED': failed,  # 运行时实测
+        'PERSISTENCE_FAILED_VERIFIED_BY': 'runtime snapshot scan',
         'PERSISTENCE_ROOT_CAUSE_STATUS': 'UNRESOLVED_BUT_CONTAINED',
         'failure_not_silent': True,           # K1 fail-safe 阻断 delivery
+        'failure_not_silent_verified_by': 'K1 self-check design + tests',
         'failure_no_false_evidence': True,    # DECISION_PERSISTENCE_FAILED 标记
+        'failure_no_false_evidence_verified_by': 'K1 self-check design + tests',
         'failure_not_fake_delivery': True,    # delivery blocked on unconfirmed
+        'failure_not_fake_delivery_verified_by': 'K1 self-check design + tests',
         'failure_impact_detectable': True,    # snapshot_verify 可检测
+        'failure_impact_detectable_verified_by': 'snapshot_verify module',
         'affected_excludable_from_eval': True,  # 被影响 Decision 可排除
+        'affected_excludable_from_eval_verified_by': 'K5 readback contamination flag',
     }
 
 
@@ -192,9 +228,13 @@ def _check_G_real_holdings() -> dict:
     return {
         'source': SRC,
         'schema_unique': True,
+        'schema_unique_verified_by': 'real_portfolio_truth static',
         'same_day_snapshot_reuse': True,
+        'same_day_snapshot_reuse_verified_by': 'real_portfolio_truth design',
         'bitable_failure_not_silent': True,
+        'bitable_failure_not_silent_verified_by': 'real_portfolio_truth design',
         'no_fake_current_holdings': True,
+        'no_fake_current_holdings_verified_by': 'real_portfolio_truth design',
         'simulation_reads_real': False,
         'real_reads_simulation': False,
     }
@@ -214,18 +254,32 @@ def _check_H_reconciliation(validation_date: str) -> dict:
 
 
 def _check_I_delivery() -> dict:
-    """I. Delivery Integrity：delivery != creation，duplicate suppression。"""
+    """I. Delivery Integrity：delivery != creation，duplicate suppression。
+
+    以下为 delivery 层设计依赖项结论（来自 K2 presentation + K1 设计），
+    非每次运行时实时验证，已逐条标注 verified_by。
+    """
     return {
         'delivery_neq_creation': True,
+        'delivery_neq_creation_verified_by': 'K2 presentation + K1 design',
         'duplicate_suppression': True,
+        'duplicate_suppression_verified_by': 'K1 idempotent retry design',
         'delivery_failure_no_decision_modify': True,
+        'delivery_failure_no_decision_modify_verified_by': 'K1 fail-safe',
         'server_readback_unavailable_ok': True,
+        'server_readback_unavailable_ok_verified_by': 'K2 delivery design',
         'no_fake_user_received': True,
+        'no_fake_user_received_verified_by': 'K2 delivery design',
     }
 
 
 def _check_J_output_authority() -> dict:
-    """J. Output Authority：FINAL=Engine, SIGNAL/INFO/HEALTH 非 Final。"""
+    """J. Output Authority：FINAL=Engine, SIGNAL/INFO/HEALTH 非 Final。
+
+    以下判断依赖 K2 presentation 六类 taxonomy 设计结论，已标注 verified_by。
+    presentation 模块常量经测试锁定（见 test_k2_presentation.py），
+    此处引用其契约而非重新硬编码。
+    """
     from decision import presentation as pres
     return {
         'FINAL_OWNER': 'DecisionEngine',
@@ -236,6 +290,7 @@ def _check_J_output_authority() -> dict:
         'DEBUG_IS_FINAL': False,
         'is_final_requires_decision_id': True,
         'non_final_not_trade_command': True,
+        'verified_by': 'K2 presentation taxonomy + test_k2_presentation.py',
     }
 
 
@@ -280,6 +335,9 @@ def evaluate_gate(validation_date: str) -> dict:
         blockers.append('STALE_AS_READY')
     if F['PERSISTENCE_FAILED'] > 0:
         degradations.append('PERSISTENCE_FAILED')
+    if B.get('freshness_unverified'):
+        # 新鲜度未验证（UNKNOWN 或 STALE）不得静默归为 CLEAN
+        degradations.append('FRESHNESS_UNVERIFIED')
 
     if blockers:
         final = 'BLOCKED'

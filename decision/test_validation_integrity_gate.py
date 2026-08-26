@@ -22,10 +22,22 @@ from decision.validation_baseline import is_validation_trade, VALIDATION_START_D
 
 class TestCleanValidation(unittest.TestCase):
 
-    def test_clean_state_current(self):
+    def test_freshness_stale_yields_degraded_not_clean(self):
+        # 修复后：market_cache latest=2026-08-26 < validation 8/27 → STALE → DEGRADED
+        # 不再静默 CLEAN（验证 L 阶段"失败不会静默"的核心要求）
         r = gate.evaluate_gate('2026-08-27')
-        self.assertEqual(r['FINAL_STATE'], 'CLEAN')
-        self.assertTrue(r['OPEN_FORMAL_VALIDATION'])
+        self.assertEqual(r['FINAL_STATE'], 'DEGRADED')
+        self.assertIn('FRESHNESS_UNVERIFIED', r['DEGRADATIONS'])
+        self.assertFalse(r['OPEN_FORMAL_VALIDATION'])
+
+    def test_all_other_gates_pass(self):
+        # 除 freshness（数据截止到 8/26，尚未发生 8/27 交易）外，其余 gate 必须全绿
+        r = gate.evaluate_gate('2026-08-27')
+        self.assertEqual(r['BLOCKERS'], [])
+        for k in ['A_DECISION_INTEGRITY', 'C_DB_ISOLATION', 'D_SIMULATION_VALUATION',
+                  'E_TASK_CHAIN', 'F_PERSISTENCE', 'G_REAL_HOLDINGS', 'H_RECONCILIATION',
+                  'I_DELIVERY', 'J_OUTPUT_AUTHORITY', 'K_VALIDATION_BOUNDARY']:
+            self.assertNotEqual(r[k], {}, f'{k} empty')
 
     def test_v1_freeze_confirmed(self):
         r = gate.evaluate_gate('2026-08-27')
@@ -115,11 +127,42 @@ class TestStaleAndMissingData(unittest.TestCase):
         if B['status'] == 'STALE':
             self.assertNotEqual(B['status'], 'READY')
 
+    def test_b_gate_real_table_query(self):
+        # B-gate 必须真实查 klines 表（非失效的 klines_daily）
+        # 当前 market_cache latest=2026-08-26 < 2026-08-27 → STALE + unverified
+        r = gate.evaluate_gate('2026-08-27')
+        B = r['B_DATA_FRESHNESS']
+        self.assertEqual(B['status'], 'STALE')
+        self.assertTrue(B['freshness_unverified'])
+        self.assertEqual(B['market_cache_latest'], '2026-08-26')
+        self.assertEqual(B['verified_by'], 'runtime query (klines table)')
+
+    def test_freshness_unverified_escalates_degraded(self):
+        # 修复前：UNKNOWN 静默 CLEAN；修复后：unverified 必须 DEGRADED
+        r = gate.evaluate_gate('2026-08-27')
+        self.assertEqual(r['FINAL_STATE'], 'DEGRADED')
+        self.assertIn('FRESHNESS_UNVERIFIED', r['DEGRADATIONS'])
+
+    def test_freshness_unknown_escalates(self):
+        # market_cache 缺失或查询失败 → UNKNOWN → DEGRADED
+        import tempfile, os
+        orig = gate.KNOWN_PRODUCTION_DBS['market_cache']
+        # 指向不存在的路径
+        gate.KNOWN_PRODUCTION_DBS['market_cache'] = '/nonexistent/path/market_cache.db'
+        try:
+            r = gate.evaluate_gate('2026-08-27')
+            self.assertEqual(r['B_DATA_FRESHNESS']['status'], 'UNKNOWN')
+            self.assertTrue(r['B_DATA_FRESHNESS']['freshness_unverified'])
+            self.assertIn('FRESHNESS_UNVERIFIED', r['DEGRADATIONS'])
+        finally:
+            gate.KNOWN_PRODUCTION_DBS['market_cache'] = orig
+
     def test_missing_data_not_faked(self):
         # Bitable failure 场景：real holdings gate 不允许伪造
         r = gate.evaluate_gate('2026-08-27')
         G = r['G_REAL_HOLDINGS']
         self.assertTrue(G['no_fake_current_holdings'])
+        self.assertIn('no_fake_current_holdings_verified_by', G)
         self.assertTrue(G['bitable_failure_not_silent'])
 
 

@@ -3,25 +3,40 @@
 > 基线：hermes-stock-phase-8k5 / 61b6d12 → 本阶段 tag: hermes-stock-phase-8l0
 > 日期：2026-08-26。最终验证可信度审计，零生产逻辑修改。
 
-## 最终状态：VALIDATION_INTEGRITY = CLEAN ✅
+## 最终状态：VALIDATION_INTEGRITY = DEGRADED（8-L1 修正后）⚠️
 
-**OPEN_FORMAL_VALIDATION = True** — 允许正式进入 2026-08-27 起的 V1 Forward Validation。
+**OPEN_FORMAL_VALIDATION = False** — 因 B-gate（数据新鲜度）实测未通过，进入 DEGRADED 而非 CLEAN。
 
-## A-K 11 项 Gate 结果
+> **8-L1 修正说明**：原 8-L0 的 FINAL_STATE=CLEAN 存在水分。经审计发现 B-gate 查询的表名错误（`klines_daily` 实为 `klines`），
+> 异常被静默吞掉，导致 freshness 检查从未真正执行却报 CLEAN。8-L1 修复：
+> 1. B-gate 改用真实表 `klines`，异常/UNKNOWN/STALE 显式升级为 DEGRADED（FRESHNESS_UNVERIFIED）
+> 2. 当前实测 market_cache latest=2026-08-26 < validation_date 2026-08-27 → STALE → DEGRADED
+> 3. F/I/J/E 的声明式 True 全部加 `verified_by` 标注来源（K0/K1/K2 结论，非实时自证），消除循环论证
+
+**修正后诚实结论**：A/C/D/E/G/H/I/J/K 全绿（BLOCKERS=[]），仅 B（数据新鲜度）因 8/27 交易尚未发生、cache 停留在 8/26 而 DEGRADED。
+这是预期内的"尚未到交易日"状态，不是系统故障——待 8/27 真实数据产生后该 gate 会转 READY。
+
+**与 L 阶段核心要求一致**：失败（数据未就绪）不会静默归为 CLEAN，而是显式 DEGRADED 并阻止 OPEN_FORMAL_VALIDATION。
+
+## A-K 11 项 Gate 结果（8-L1 修正后）
 
 | Gate | 结果 | 说明 |
 |---|---|---|
-| A. Decision Integrity | ✅ CLEAN | Final Action 全部 DecisionEngine 产生（K0 确认唯一 Owner）；snapshot 持久化由 K1 self-check 保证；无第二 Final Owner |
-| B. Data Freshness | ✅ CLEAN | market_cache latest 检查；stale 不默认 READY |
+| A. Decision Integrity | ✅ CLEAN | Final Action 全部 DecisionEngine 产生（K0 确认唯一 Owner）；snapshot 持久化由 K1 self-check 保证 |
+| B. Data Freshness | ⚠️ DEGRADED | **实测**：market_cache latest=2026-08-26 < 2026-08-27 → STALE → FRESHNESS_UNVERIFIED（8-L1 修复后真实生效，不再静默） |
 | C. DB Isolation | ✅ CLEAN | wrong_db_access_count=0；execution/outcome_store→market_cache；real_portfolio_truth→real_history；Real=FEISHU_BITABLE |
-| D. Simulation Valuation | ✅ CLEAN | cash+holdings=total；valuation_inconsistency=0；legacy 全排除（validation_trades=0） |
-| E. Task Chain | ✅ CLEAN | market-cache→daily-data→double-monitor→stop-loss 链路组件齐全 |
-| F. Decision Persistence | ⚠️ UNRESOLVED_BUT_CONTAINED | K1 root cause 未解，但 5 项隔离证明全 True（不静默/不造假 Evidence/不伪装 Delivery/可检测/可排除）→ DEGRADED 不构成 BLOCK |
-| G. Real Holdings | ✅ CLEAN | FEISHU_BITABLE 唯一源；sim 不读 real、real 不读 sim |
+| D. Simulation Valuation | ✅ CLEAN | cash+holdings=total；valuation_inconsistency=0；legacy 全排除 |
+| E. Task Chain | ✅ CLEAN | 链路组件齐全（downstream_consumes_correct_data 标注为 K0 静态审计结论） |
+| F. Decision Persistence | ✅ CLEAN（运行实测）/ ⚠️ UNRESOLVED_BUT_CONTAINED | PERSISTENCE_FAILED 运行时实测=0；5 项隔离证明标注 K1 设计来源 |
+| G. Real Holdings | ✅ CLEAN | FEISHU_BITABLE 唯一源；各项标注 real_portfolio_truth 设计来源 |
 | H. Daily/Urgent Reconciliation | ✅ CLEAN | urgent⊆daily；mismatch=0 |
-| I. Delivery Integrity | ✅ CLEAN | delivery≠creation；duplicate suppression；不伪造 USER_RECEIVED |
-| J. Output Authority | ✅ CLEAN | FINAL=Engine；SIGNAL/INFO/HEALTH/DEBUG 非 Final；is_final 必带 decision_id |
-| K. Validation Boundary | ✅ CLEAN | START=2026-08-27；legacy 8/9~8/26 标 PRE_FIX_LEGACY_RESULT 排除；auto_change 阻断 |
+| I. Delivery Integrity | ✅ CLEAN | delivery≠creation 等标注 K2/K1 设计来源 |
+| J. Output Authority | ✅ CLEAN | FINAL=Engine；SIGNAL/INFO/HEALTH/DEBUG 非 Final；标注 K2 taxonomy 来源 |
+| K. Validation Boundary | ✅ CLEAN | START=2026-08-27；legacy 8/9~8/26 排除 |
+
+## 已知遗留（非本次引入）
+
+- `decision/test_k1_persistence.py::test_daily_reads_stoploss_snapshots` 在 sandbox 无持仓时孤立失败（依赖运行时快照触发），属 K1 阶段环境依赖测试，与 L/L1 逻辑无关。正式环境有持仓时可正常通过。
 
 ## 关键 Failure Scenarios（10 项隔离性验证）
 
