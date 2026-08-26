@@ -47,9 +47,10 @@ def _isolate_daily_contract_state():
     # 2) snapshot 目录隔离
     snap_dir = tempfile.mkdtemp(prefix='daily_contract_snap_')
     import decision.daily_decision_contract as _ddc
+    _orig_snap_dir = _ddc.SNAP_DIR  # K0/K1: teardown 恢复，避免污染其它测试的全局 SNAP_DIR
     _ddc.SNAP_DIR = snap_dir
     yield
-    # teardown: temp dirs auto-cleaned
+    _ddc.SNAP_DIR = _orig_snap_dir
 
 
 def _make_snap_dir():

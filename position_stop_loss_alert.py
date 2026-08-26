@@ -239,6 +239,23 @@ def build_position_decision(p, mkt, regime, permission, snap, total_capital=None
     except Exception as _exec_e:
         print(f"[WARN] execution record failed: {_exec_e}")
     snap_mod.save_snapshot(dec)
+    # ── Phase 8-K1: persistence self-check + 受控重试 + 醒目失败告警 ──
+    # 顺序锁定：Decision → Snapshot → Verify → Delivery。不重算 Decision，不改 decision_id。
+    _p_status = 'UNKNOWN'
+    try:
+        from decision.snapshot_verify import persist_with_verification, format_persistence_failure
+        _p_status, _p_info = persist_with_verification(dec)
+        if _p_status == 'FAILED':
+            print(format_persistence_failure(
+                dec.symbol, dec.action, dec.decision_id, _p_info,
+                timestamp=dec.timestamp))
+            print("  标记: DECISION_PERSISTENCE_FAILED")
+        else:
+            print(f"  [PERSIST] {_p_status}: {_p_info}")
+    except Exception as _pv_e:
+        _p_status = 'FAILED'
+        print(f"🚨 FINAL DECISION PERSISTENCE FAILED 🚨 (verify module error): {_pv_e}")
+        print("  标记: DECISION_PERSISTENCE_FAILED")
     return dec, reasons
 
 
@@ -277,12 +294,25 @@ def run_decision():
                                                snap, TOTAL_CAPITAL)
         decisions.append({'decision': dec, 'exit_reasons': reasons})
     # 落盘到 Decision Snapshots，供 daily_decision_contract 读入
+    # （Phase 8-K1: canonical writer = decision/snapshot.save_snapshot，
+    #   每只决策经 persist_with_verification 自校验；失败在 build_position_decision 内醒目告警）
+    persistence_failed = []
     try:
         from decision.snapshot import save_snapshot
+        from decision.snapshot_verify import persist_with_verification, format_persistence_failure
         for item in decisions:
-            save_snapshot(item['decision'])
+            dec = item['decision']
+            _st, _info = persist_with_verification(dec)
+            if _st == 'FAILED':
+                persistence_failed.append(dec.decision_id)
+                print(format_persistence_failure(
+                    dec.symbol, dec.action, dec.decision_id, _info, timestamp=dec.timestamp))
     except Exception as _e:
         print(f"[WARN] snapshot save failed: {_e}")
+        for item in decisions:
+            persistence_failed.append(item['decision'].decision_id)
+    if persistence_failed:
+        print(f"  ⚠️ DECISION_PERSISTENCE_FAILED x{len(persistence_failed)}: {persistence_failed}")
     return decisions
 
 
