@@ -19,25 +19,17 @@ def to_westock(code):
     return 'sz' + code
 
 def read_holdings_codes():
-    out = subprocess.run(['lark-cli','base','+record-list','--base-token',BT_APP,
-                          '--table-id',BT_TABLE], capture_output=True, text=True, timeout=60).stdout
-    lines = [l.strip() for l in out.splitlines() if '|' in l and '---' not in l]
-    if not lines:
-        raise RuntimeError(f"fetch_holdings_westock: lark-cli 返回空表格，输出可能已变更。原始输出前200字符: {out[:200]!r}")
-    # 字段漂移保护：从表头定位 CODE 列索引
-    header = [h.strip() for h in lines[0].split('|') if h.strip()]
-    code_idx = next((i for i, h in enumerate(header) if '代码' in h or h == 'CODE'), 0)
-    codes = []
-    for line in lines[1:]:
-        parts = [p.strip() for p in line.split('|') if p.strip()]
-        if len(parts) <= code_idx:
-            continue
-        c = parts[code_idx]
-        if len(c) == 6 and c.isdigit():
-            codes.append(c)
-    if not codes:
-        raise RuntimeError(f"fetch_holdings_westock: 未解析到有效代码。表头={header}，原始输出前200字符: {out[:200]!r}")
-    return codes
+    # J0-G: Bitable schema parsing 统一走 real_portfolio_truth 单一权威 reader，
+    # 本脚本不再自己解析表结构；并复用当日 snapshot 缓存避免重复 lark-cli。
+    try:
+        from decision.real_portfolio_truth import get_daily_real_holdings
+        holdings, _meta = get_daily_real_holdings()
+        codes = [h['code'] for h in holdings if h.get('code')]
+        if codes:
+            return codes
+        raise RuntimeError("real_portfolio_truth reader 返回空持仓")
+    except ImportError as _ie:
+        raise RuntimeError(f"统一 Bitable reader 不可用（FAIL CLOSED，不做本地 schema 解析）: {_ie}")
 
 def run_westock(cmd, code):
     import time as _t

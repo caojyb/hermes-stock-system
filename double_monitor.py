@@ -1091,16 +1091,20 @@ try:
     sim_cur.execute("SELECT code, name, status, buy_price, profit_pct FROM trades WHERE sell_date=?", (today_str,))
     sells = sim_cur.fetchall()
     if buys or sells:
+        buy_codes = {t[0] for t in buys}
+        sell_codes = {t[0] for t in sells}
+        multi = buy_codes & sell_codes  # J0-E: 当日同 symbol BUY+SELL → MULTI_ACTION
         buy_names = [f"{t[1]}" for t in buys[:3]]
         sell_detail = []
         for t in sells[:3]:
             tp = t[4] or 0
             stype = "止损" if tp < 0 else "止盈"
             sell_detail.append(f"{t[1]}{stype}")
+        multi_note = f" | MULTI_ACTION:{','.join(sorted(multi))}" if multi else ""
         print(f"  今日交易: {'买入 ' + str(len(buys)) + '笔(' + ','.join(buy_names) + ')' if buys else ''}"
               f"{' | ' if buys and sells else ''}"
               f"{'卖出 ' + str(len(sells)) + '笔(' + ','.join(sell_detail) + ')' if sells else ''}"
-              f"{'无' if not buys and not sells else ''}")
+              f"{'无' if not buys and not sells else ''}{multi_note}")
     else:
         print(f"  今日交易: 无")
 
@@ -1114,16 +1118,44 @@ try:
         if rc_action and rc_action != 'none':
             print(f"[BRANCH] RISK_CONTROL_EXEC action={rc_action}")
             print(f"   组合回撤风控: 触发 action={rc_action}")
-            # 风控减仓后重新计算现金
-            open_pos_for_cash = sim_cur.execute("SELECT buy_shares, buy_price FROM trades WHERE status IN ('持有','部分止盈')").fetchall()
+            # ── J0-F：风控动作后重读 canonical position state，全量刷新 summary + 快照 ──
+            open_pos = sim_cur.execute(
+                "SELECT code, name, buy_shares, buy_price FROM trades WHERE status IN ('持有','部分止盈')").fetchall()
             realized_pnl = sim_cur.execute("SELECT COALESCE(SUM(sell_amount - buy_amount),0) FROM trades WHERE sell_date IS NOT NULL").fetchone()[0]
-            open_cost = sum((shares or 0) * (price or 0) for shares, price in open_pos_for_cash)
+            open_cost = sum((shares or 0) * (price or 0) for _, _, shares, price in open_pos)
             cash = TOTAL_CAPITAL + float(realized_pnl) - float(open_cost)
-            print(f"   [RC-REFRESH] 风控后现金={cash:.0f}")
+            holdings_value = 0.0
+            win_cnt = 0
+            loss_cnt = 0
+            for code, name, shares, buy_price in open_pos:
+                mkt_cur.execute("SELECT close FROM klines WHERE code=? ORDER BY date DESC LIMIT 1", (code,))
+                pr = mkt_cur.fetchone()
+                if not pr or pr[0] is None:
+                    continue
+                market_val = float(pr[0]) * shares
+                holdings_value += market_val
+                if market_val - buy_price * shares >= 0:
+                    win_cnt += 1
+                else:
+                    loss_cnt += 1
+            tv = cash + holdings_value
+            trp = (tv - TOTAL_CAPITAL) / TOTAL_CAPITAL * 100
+            sim_cur.execute("DELETE FROM portfolio_snapshots WHERE date=?", (today_str,))
+            prev_peak = sim_cur.execute("SELECT MAX(total_value) FROM portfolio_snapshots").fetchone()[0]
+            prev_peak = prev_peak if prev_peak else tv
+            peak = max(prev_peak, tv)
+            drawdown = (peak - tv) / peak * 100 if peak > 0 else 0.0
+            sim_cur.execute(
+                "INSERT INTO portfolio_snapshots (date, total_value, cash, holdings_value, "
+                "total_return_pct, max_drawdown_pct, win_count, loss_count) VALUES (?,?,?,?,?,?,?,?)",
+                (today_str, round(tv, 2), round(cash, 2), round(holdings_value, 2),
+                 round(trp, 2), round(drawdown, 2), win_cnt, loss_cnt))
+            sim_conn.commit()
+            print(f"   [RC-REFRESH] 风控后 canonical 刷新: 持仓={len(open_pos)} 现金={cash:.0f} 净值={tv:,.0f}")
     except Exception as e:
         print(f"   [WARN] 组合回撤风控检查失败: {e}")
 
-    # 当前持仓盈亏分布（已在上方实时结算中计算）
+    # 当前持仓盈亏分布（J0-F：风控动作后已用 canonical state 重算）
     print(f"  当前持仓: {len(open_pos)} 只 | 盈亏分布: 盈利 {win_cnt} 只/亏损 {loss_cnt} 只")
 
     # 候选池

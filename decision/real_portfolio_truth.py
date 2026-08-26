@@ -87,6 +87,50 @@ def _today_iso() -> str:
     return date.today().isoformat()
 
 
+# ── J0-H: DAILY_REAL_HOLDINGS_SNAPSHOT — 当日进程内单次读取缓存 ──
+# 同一生产日首次 build_real_snapshot() 触发 lark-cli，后续调用复用同一 holdings。
+# 读取失败不缓存（不伪装 READY）；跨日自动失效；显式注入 holdings 不经过缓存。
+_DAILY_HOLDINGS_CACHE: dict | None = None
+_DAILY_HOLDINGS_CACHE_DATE: str | None = None
+DAILY_HOLDINGS_SCHEMA_VERSION = 'bitable_v1_fieldindex'
+
+
+def get_daily_real_holdings(refresh: bool = False) -> tuple[list[dict], dict]:
+    """当日真实持仓单次读取（J0-H）。
+
+    返回 (holdings, cache_meta)。失败抛异常且不写缓存。
+    cache_meta: {'cached': bool, 'captured_at': str, 'schema_version': str, 'source_hash': str}
+    """
+    global _DAILY_HOLDINGS_CACHE, _DAILY_HOLDINGS_CACHE_DATE
+    today = _today_iso()
+    if not refresh and _DAILY_HOLDINGS_CACHE is not None and _DAILY_HOLDINGS_CACHE_DATE == today:
+        meta = dict(_DAILY_HOLDINGS_CACHE.get('_meta') or {})
+        meta['cached'] = True
+        return _DAILY_HOLDINGS_CACHE['holdings'], meta
+    holdings = _read_bitable_holdings()
+    import hashlib as _hashlib
+    src_hash = _hashlib.sha256(
+        json.dumps(holdings, sort_keys=True, ensure_ascii=False).encode('utf-8')).hexdigest()[:16]
+    _DAILY_HOLDINGS_CACHE = {
+        'holdings': list(holdings),
+        '_meta': {
+            'cached': False,
+            'captured_at': _now_iso(),
+            'schema_version': DAILY_HOLDINGS_SCHEMA_VERSION,
+            'source_hash': src_hash,
+        },
+    }
+    _DAILY_HOLDINGS_CACHE_DATE = today
+    return list(holdings), dict(_DAILY_HOLDINGS_CACHE['_meta'])
+
+
+def reset_daily_real_holdings_cache() -> None:
+    """测试/强制刷新用。"""
+    global _DAILY_HOLDINGS_CACHE, _DAILY_HOLDINGS_CACHE_DATE
+    _DAILY_HOLDINGS_CACHE = None
+    _DAILY_HOLDINGS_CACHE_DATE = None
+
+
 def _validate_field_order(records: list) -> None:
     """校验返回记录字段数量是否与 BITABLE_FIELD_INDEX 一致。"""
     if not records:
@@ -190,8 +234,9 @@ def build_real_snapshot(
     # 1. Holdings
     if holdings is None:
         try:
-            holdings = _read_bitable_holdings()
+            holdings, cache_meta = get_daily_real_holdings()
             provenance['holdings_source'] = 'bitable'
+            provenance['holdings_cache'] = cache_meta  # J0-H: cached/captured_at/source_hash
         except Exception as e:
             return {
                 'ok': False, 'error': f'真实持仓读取失败: {e}',

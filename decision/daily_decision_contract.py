@@ -169,6 +169,24 @@ def classify_actions(snapshots: list[dict], sim_trades: list[dict], readiness: d
                 item['target_value'] = None
                 item['target_quantity'] = None
 
+        # J0-D: QUALITY_ERROR fail-safe — 真实持仓关键字段不可信时 BUY/ADD 必须 BLOCKED；
+        # SELL/REDUCE/HOLD 不受影响（基于市场风险的退出不被成本异常阻断）。
+        if raw_action in (BUY, ADD):
+            try:
+                q_status = get_real_holdings_quality_status()
+            except Exception:
+                q_status = 'QUALITY_UNKNOWN'
+            if q_status == 'QUALITY_ERROR':
+                item['action'] = NO_TRADE
+                item['reason_codes'] = sorted(set((item.get('reason_codes') or []) + ['REAL_HOLDINGS_QUALITY_ERROR']))
+                item['explanation'] = '; '.join(item['reason_codes'])
+                item['sizing_status'] = 'BLOCKED'
+                item['target_value'] = None
+                item['target_quantity'] = None
+            elif q_status == 'QUALITY_WARNING':
+                # WARNING 允许分析，仅显著标注，不阻断
+                item.setdefault('quality_warning', True)
+
         action = item['action']
         if action in (BUY, ADD, HOLD, REDUCE, SELL, NO_TRADE):
             actions[action].append(item)
@@ -252,7 +270,7 @@ def build_market_section() -> dict:
 
 
 def build_data_health_section() -> dict:
-    section = {
+    section: dict = {
         'market_regime': 'VALID',
         'permission': 'VALID',
         'portfolio': 'VALID',
@@ -266,9 +284,37 @@ def build_data_health_section() -> dict:
             section['real_asset_snapshot'] = rp['data_quality']
         if rp.get('total_asset') is None:
             section['real_asset_snapshot'] = 'PARTIAL'
+        # J0-D：real holdings quality gate 接入 data_health（局部语义，非全局 BROKEN）
+        qr = rp.get('quality_report') or {}
+        overall = (qr.get('overall') or 'UNKNOWN').upper()
+        if overall == 'OK':
+            overall = 'VALID'
+        section['real_holdings_quality'] = overall
+        section['quality_warning_count'] = int(qr.get('warning_count') or 0)
+        section['quality_error_count'] = int(qr.get('error_count') or 0)
+        section['quality_flags'] = [
+            {'field': c.get('field'), 'level': c.get('level'), 'reason': c.get('reason')}
+            for c in (qr.get('checks') or []) if isinstance(c, dict)
+        ]
     except Exception:
         section['real_asset_snapshot'] = 'MISSING'
     return section
+
+
+def get_real_holdings_quality_status(data_health: dict | None = None) -> str:
+    """J0-D: 返回 QUALITY_VALID / QUALITY_WARNING / QUALITY_ERROR / QUALITY_UNKNOWN。
+
+    局部语义：ERROR 只表示真实持仓字段不可信（avg_cost/current_price/quantity），
+    不等价于全局系统 BROKEN。
+    """
+    try:
+        dh = data_health if data_health is not None else build_data_health_section()
+        q = (dh.get('real_holdings_quality') or 'UNKNOWN').upper()
+        if q == 'OK':
+            q = 'VALID'
+        return f'QUALITY_{q}'
+    except Exception:
+        return 'QUALITY_UNKNOWN'
 
 
 def build_decision_summary(actions: dict) -> dict:

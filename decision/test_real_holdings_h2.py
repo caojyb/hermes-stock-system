@@ -72,7 +72,18 @@ def fixed_today(monkeypatch):
 
 
 def _fake_bitable(monkeypatch, holdings):
+    # J0-H: 当日缓存存在时必须先失效，否则 mock 的 reader 不会被调用
+    from decision import real_portfolio_truth as _rpt
+    _rpt.reset_daily_real_holdings_cache()
     monkeypatch.setattr('decision.real_portfolio_truth._read_bitable_holdings', lambda: holdings)
+
+
+@pytest.fixture(autouse=True)
+def _reset_daily_cache_after_test():
+    """J0-H 缓存跨测试隔离：每个测试结束后清空当日缓存"""
+    yield
+    from decision import real_portfolio_truth as _rpt
+    _rpt.reset_daily_real_holdings_cache()
 
 
 # ── 1. Bitable正常读取 ──

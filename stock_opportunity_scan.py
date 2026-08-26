@@ -138,19 +138,18 @@ def get_holdings():
     """
     holdings = {}
 
-    # simulation.db
+    # simulation.db — FAIL CLOSED：正式 resolver 失败时禁止 fallback 到未知 DB（Phase 8-J0B）
     try:
-        _sim_path = None
-        try:
-            from simulation_db_helper import get_active_sim_db
-            _sim_path = get_active_sim_db()
-        except Exception:
-            pass
+        from simulation_db_helper import get_active_sim_db
+        _sim_path = get_active_sim_db()
         if not _sim_path:
-            from pathlib import Path
-            _sim_path = str(Path(__file__).resolve().parent.parent.parent.parent /
-                            'skills/stock/stock-expert/simulation.db')
+            raise RuntimeError("get_active_sim_db() 返回空路径")
+    except Exception as e:
+        print(f"[ERROR] 模拟仓 DB 解析失败，跳过模拟仓持仓读取（FAIL CLOSED，不做错误 fallback）: {e}")
+        _sim_path = None
 
+    if _sim_path:
+      try:
         conn = sqlite3.connect(_sim_path)
         cur = conn.cursor()
         cur.execute("""
@@ -170,7 +169,7 @@ def get_holdings():
                 'buy_date': str(buy_date or ''),
             }
         conn.close()
-    except Exception as e:
+      except Exception as e:
         print(f"[WARN] 读取模拟仓失败: {e}")
 
     # Bitable 真实持仓
