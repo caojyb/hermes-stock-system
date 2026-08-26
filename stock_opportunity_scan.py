@@ -12,6 +12,45 @@
 import sqlite3, urllib.request, json, os, sys, subprocess
 from datetime import datetime
 
+# ── Phase 8-K4 M-3: 交易时段判定（防御性锁定，避免盘后误标"盘中推荐"）──
+TRADING_SESSIONS = [
+    ("MORNING", (9, 30), (11, 30)),
+    ("AFTERNOON", (13, 0), (15, 0)),
+]
+
+
+def current_session(now=None):
+    """返回当前交易时段状态。
+
+    仅依赖本地时钟 + 工作日判断，不依赖网络。
+    返回值：'INTRADAY' / 'POST_CLOSE' / 'PRE_OPEN' / 'NON_TRADING'
+    """
+    now = now or datetime.now()
+    # 周末（5=Sat, 6=Sun）
+    if now.weekday() >= 5:
+        return 'NON_TRADING'
+    t = (now.hour, now.minute)
+    for _name, (sh, sm), (eh, em) in TRADING_SESSIONS:
+        # 收盘时刻 15:00 整视为 POST_CLOSE（市场已停止连续竞价）
+        if (sh, sm) <= t < (eh, em):
+            return 'INTRADAY'
+    # 收盘后（含 15:00 整）或非交易时段开盘前
+    if t >= (15, 0):
+        return 'POST_CLOSE'
+    return 'PRE_OPEN'
+
+
+def session_label(now=None):
+    """供展示层使用的标签。盘后/非交易时段不返回'盘中'类措辞。"""
+    s = current_session(now)
+    return {
+        'INTRADAY': '盘中推荐',
+        'POST_CLOSE': '盘后候选更新',
+        'PRE_OPEN': '盘前扫描',
+        'NON_TRADING': '非交易日',
+    }.get(s, '非交易时段')
+
+
 # ── 路径配置 ──────────────────────────────────────────────
 HERMES_DIR = os.path.expanduser("~/.hermes")
 MARKET_DB = os.path.join(HERMES_DIR, "skills/stock/stock-expert/market_cache.db")
@@ -510,6 +549,11 @@ def track_to_pool(alerts, source="intraday_scan"):
 
 # ── 主逻辑 ────────────────────────────────────────────────
 if __name__ == "__main__":
+    # ── Phase 8-K4 M-3: session 防御性 SKIP（盘后/非交易时段不再推送"盘中推荐"）──
+    _sess = current_session()
+    if _sess in ('POST_CLOSE', 'NON_TRADING', 'PRE_OPEN'):
+        # 默认策略：POST_CLOSE = SKIP（不输出"盘中推荐"，不使用 stale 收盘兜底价当实时价）
+        sys.exit(0)
     candidates = get_candidates()
     if not candidates:
         sys.exit(0)
@@ -561,7 +605,7 @@ if __name__ == "__main__":
             })
 
     if not pre_alerts:
-        lines = ["【盘中推荐 · 无信号】"]
+        lines = [f"【{session_label()} · 无信号】"]
         if rejected:
             lines.append("")
             lines.append(f"⛔ 基本面过滤排除 {len(rejected)} 只：")
@@ -603,7 +647,7 @@ if __name__ == "__main__":
             new_alerts.append(a)
 
     # 发飞书
-    lines = [f"【盘中推荐 · {datetime.now().strftime('%H:%M')}】"]
+    lines = [f"【{session_label()} · {datetime.now().strftime('%H:%M')}】"]
     if holding_alerts:
         lines.append("=== 持仓内信号 ===")
         for a in sorted(holding_alerts, key=lambda x: x["confidence"], reverse=True)[:8]:

@@ -52,8 +52,9 @@ class TestM3SessionWindow(unittest.TestCase):
         lst = jobs if isinstance(jobs, list) else jobs.get('jobs', [])
         opp = [j for j in lst if j.get('name') == 'stock-opportunity-push'][0]
         expr = opp['schedule']['expr']
-        # 13-15 含 15:00（收盘时刻）；15:30 的 run 由 */30 在 15:00 后再 +30min 产生
-        self.assertIn('13-15', expr)
+        # K4 已收窄：13-14（不再含 15:00/15:30 盘后 slot）
+        self.assertIn('13-14', expr)
+        self.assertNotIn('13-15', expr)
 
     def test_post_close_intraday_semantic_error_exists(self):
         # 8/26 15:31 样本含【盘中推荐】= 盘后语义错误
