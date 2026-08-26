@@ -32,7 +32,12 @@ print(f"📊 市场环境: {ENV_LABEL or '未知'} | 总分: {ENV_TOTAL if ENV_T
 from decision.engine import DecisionEngine
 from decision.adapters import entry_ctx, position_ctx, norm_exit_signal
 from decision.portfolio import assess_portfolio
-from decision import snapshot as decision_snapshot
+from decision import snapshot as dec
+
+
+# ── Phase 8-K2 M-5: Debug 分流（工程日志落盘，stdout 用户面不再输出）──
+import _k2_debug_shunt  # noqa: E402
+
 decision_engine = DecisionEngine(
     strategy=DEFAULT_STRATEGY, config_version='phase1',
     code_version='double_monitor_p2',

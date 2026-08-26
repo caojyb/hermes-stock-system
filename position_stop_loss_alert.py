@@ -320,7 +320,9 @@ def format_decisions(decisions):
     """格式化统一 Position Decision（只建议）。"""
     if not decisions:
         return ""
-    lines = [f"📊 **真实持仓统一决策** | {date.today()}", "=" * 55]
+    # Phase 8-K2: URGENT·FINAL 层级标签（决策来自 DecisionEngine，含 decision_id）
+    from decision.presentation import LABEL_URGENT, sanitize_user_surface
+    lines = [f"{LABEL_URGENT} 📊 **真实持仓统一决策** | {date.today()}", "=" * 55]
     for item in decisions:
         d = item['decision']
         action = d.action
@@ -330,10 +332,11 @@ def format_decisions(decisions):
         lines.append(f"   原因: {', '.join(d.reason_codes)}")
         if item['exit_reasons']:
             lines.append(f"   触发: {' | '.join(item['exit_reasons'])}")
-        lines.append(f"   {d.decision_id}")
+        lines.append(f"   Decision ID: {d.decision_id}")
     lines.append("=" * 55)
     lines.append("仅建议，不自动交易。请人工在券商确认。")
-    return '\n'.join(lines)
+    text, _removed = sanitize_user_surface('\n'.join(lines))
+    return text
 
 
 def send_feishu(text):

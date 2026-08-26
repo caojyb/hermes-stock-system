@@ -393,6 +393,8 @@ def build_daily_report(today: str | None = None) -> dict:
 
 def format_human_readable(report: dict) -> str:
     lines = []
+    # Phase 8-K2: presentation taxonomy（展示层，无业务语义）
+    from decision import presentation as decision_presentation
     meta = report.get('meta', {})
     mkt = report.get('market', {})
     dh = report.get('data_health', {})
@@ -429,7 +431,8 @@ def format_human_readable(report: dict) -> str:
         if not items:
             continue
         label = action_key.upper()
-        lines.append(f"### {label}")
+        # Phase 8-K2 M-2: 显式层级标签（FINAL，来自 DecisionEngine，含 decision_id）
+        lines.append(f"### {decision_presentation.LABEL_FINAL}{label}")
         for it in items:
             sym = it.get('symbol') or it.get('name') or 'N/A'
             name = it.get('name', '')
