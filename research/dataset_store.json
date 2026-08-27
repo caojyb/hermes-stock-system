@@ -1,0 +1,26 @@
+{
+  "version": "phase-9a",
+  "datasets": [
+    {
+      "dataset_id": "dataset_v1_full",
+      "version": "1.0",
+      "date_range": "2005-01-01..2024-12-31",
+      "universe": "全市场（过滤688/787，is_st=0 基于当前表，非历史PIT）",
+      "pit_status": "PARTIAL",
+      "survivorship_status": "LIMITED",
+      "market_cap_status": "PARTIAL",
+      "st_status": "BLOCKED",
+      "execution_model_status": "PARTIAL",
+      "feature_coverage": "full_v1_candidate + forward_outcome + regime_pit",
+      "known_limitations": [
+        "Historical ST = BLOCKED",
+        "Historical Market Cap = 部分 APPROXIMATE",
+        "Historical Execution Model = limit-up 未完整建模 (PARTIAL)",
+        "Survivorship = LIMITED",
+        "某些指数历史存在缺口（如 000300 仅至 2026-07-24）"
+      ],
+      "source_db": "/home/caojy/.hermes/skills/stock/stock-expert/market_cache.db",
+      "created_at": "2026-08-27"
+    }
+  ]
+}

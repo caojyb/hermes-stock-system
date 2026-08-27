@@ -1,0 +1,27 @@
+{
+  "version": "phase-9a",
+  "strategies": [
+    {
+      "strategy_id": "V1",
+      "strategy_version": "1.0",
+      "strategy_name": "V1 Top3 翻倍潜力（量产基线）",
+      "owner": "system",
+      "status": "FORWARD_VALIDATION",
+      "research_status": "COMPLETE",
+      "qualification_status": "QUALIFIED",
+      "production_status": "FORWARD_VALIDATION",
+      "created_at": "2026-08-27",
+      "effective_from": "2026-08-27",
+      "effective_to": null,
+      "research_dataset_version": "dataset_v1_full",
+      "execution_model_version": "EXEC_PARTIAL",
+      "cost_model_version": "COST_V1",
+      "regime_scope": "ALL_REGIMES",
+      "universe_definition": "全市场无LIMIT；过滤688/787；is_st=0",
+      "parameter_definition": "price_pos<=40, vol_ratio>=2.7, mcap 5-90亿, amount_1d>=8000万, amount_20d>=4000万, atr_pct>=3%",
+      "entry_definition": "候选PASS + 信号A/B/C/D中≥3个确认（T+1开盘）",
+      "exit_definition": "生产退出规则（本框架不修改）",
+      "role": "BENCHMARK_STRATEGY"
+    }
+  ]
+}
