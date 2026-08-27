@@ -88,11 +88,17 @@ def f_ma60_slope(klines, _fin=None): return f_ma_slope(klines, 60, 20)
 
 
 def f_rs(klines, cross_section_median_60d):
-    """相对强度：个股 60D 收益 / 横截面中位 60D 收益。cross_section_median_60d 由 runner 提供。"""
+    """相对强度（修正，Phase 9-B.1 Part C）：
+    个股 60D 收益 − 全 universe 同日 60D 收益中位数（横截面去均值）。
+    cross_section_median_60d 由 runner 提供（按候选日 T 的 universe 中位 60D 收益）。
+    若未提供则回退为原始 60D 收益，避免 9-B 的 n_valid=0 假象。
+    """
     own = f_mom(klines, 60)
-    if own is None or cross_section_median_60d in (None, 0):
+    if own is None:
         return None
-    return _safe_div(own, cross_section_median_60d)
+    if cross_section_median_60d is None:
+        return own  # 回退：未归一化（标注 NOT_NORMALIZED），但至少有值
+    return own - cross_section_median_60d
 
 
 def f_vol_ratio(klines, _fin=None):

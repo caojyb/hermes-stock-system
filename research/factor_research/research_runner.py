@@ -218,17 +218,54 @@ def _num(v):
         return None
 
 
+def _universe_60d_returns(universe: list[str], start: str, end: str, con) -> tuple[dict, dict]:
+    """
+    预计算全 universe 每只股票每个交易日的 60D 收益序列（一次遍历，O(n)）。
+    返回 (per_sym: {symbol:{date:ret60}}, median_by_date: {date: universe_median_ret60})。
+    用于 MOM_RS 横截面去均值（Phase 9-B.1 Part C 修正）。
+    """
+    per_sym: dict[str, dict[str, float]] = {}
+    by_date: dict[str, list[float]] = {}
+    for sym in universe:
+        rows = con.execute(
+            "SELECT date, close FROM klines WHERE code=? AND date>=? AND date<=? ORDER BY date",
+            (sym, start, end)).fetchall()
+        closes = [(r[0], float(r[1])) for r in rows if r[1] is not None]
+        series: dict[str, float] = {}
+        for i in range(len(closes)):
+            if i >= 60:
+                prev = closes[i - 60][1]
+                if prev > 0:
+                    series[closes[i][0]] = closes[i][1] / prev - 1
+        per_sym[sym] = series
+        for d, v in series.items():
+            by_date.setdefault(d, []).append(v)
+    from statistics import median as _med
+    median_by_date = {d: (_med(vs) if vs else 0.0) for d, vs in by_date.items()}
+    return per_sym, median_by_date
+
+
 def build_samples(universe: list[str], start: str, end: str, regime_map: Optional[dict] = None,
-                  mcap_helper=None, cross_section_60d: Optional[dict] = None) -> list[dict]:
+                  mcap_helper=None, cross_section_60d: Optional[dict] = None,
+                  compute_cs_median: bool = True) -> list[dict]:
     """
     共享采样：对 universe × 每月候选日，计算所有 25 因子值（内联丢弃原始 klines），
     仅保留紧凑记录 {symbol, cand_date, factors:{fid:val}, fwd5, fwd10, fwd20, regime, mcap_tier}。
     内存友好（Expansion 200 股票 × 20 年不 OOM）。
+
+    compute_cs_median=True 时，内部预计算全 universe 60D 收益横截面中位数，
+    供 MOM_RS 正确归一化（修正 9-B 缺失中位数导致 n_valid=0 的假象）。
     """
     from research.factor_research.factor_definitions import FACTOR_DEFS
     fid_list = [f.factor_id for f in FACTOR_DEFS]
     con = _connect()
     samples = []
+
+    # 横截面中位数（MOM_RS 归一化）
+    median_by_date: dict[str, float] = {}
+    if compute_cs_median:
+        _, median_by_date = _universe_60d_returns(universe, start, end, con)
+
     for sym in universe:
         kdates = [r[0] for r in con.execute(
             "SELECT date FROM klines WHERE code=? AND date>=? AND date<=? ORDER BY date",
@@ -237,11 +274,11 @@ def build_samples(universe: list[str], start: str, end: str, regime_map: Optiona
             continue
         cand_dates = monthly_candidate_dates(kdates, start, end)
         fin_rows = load_fin_rows(con, sym)
-        cs_median = (cross_section_60d or {}).get(sym)
         for cd in cand_dates:
             kl = load_klines_window(con, sym, cd)
             if len(kl) < 2:
                 continue
+            cs_median = median_by_date.get(cd)  # 修正：使用按候选日的 universe 中位 60D 收益
             fvals = {}
             for fid in fid_list:
                 v, _ = compute_factor(fid, kl, fin_rows, cd, cs_median)
