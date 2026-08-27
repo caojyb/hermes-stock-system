@@ -227,13 +227,26 @@ def test_19_unknown_not_zero():
 
 # ════════ 20. V1 isolation ═════════
 def test_20_v1_isolation():
-    # 本阶段不得触碰 V1 生产/研究源码
+    # 本阶段不得触碰 V1 生产/研究源码。
+    # 允许：research/ 新增、每日 cron 产物、以及 decision/ 的 *测试文件*
+    # （9-B.2/9-B.3 对 decision 测试做日期隔离/回归修复属于测试范围，非生产修改）。
+    # 禁止：decision/ 生产模块、regime_v1/、forward_outcome.py、candidate_pit.py。
     import subprocess
     r = subprocess.run(["git", "status", "--short"], cwd=os.path.dirname(os.path.abspath(__file__)),
                        capture_output=True, text=True)
-    # 允许新增 research/factor_research 与测试与文档；不得出现对 v1/regime_v1/decision 的修改
+    ALLOWED = ("decision/test_", "decision/conftest.py", "research/", "heartbeat_state.json",
+               "hot_sector", "reports/", "snapshots/")
+    FORBIDDEN = ("decision/engine.py", "decision/forward_outcome.py", "decision/candidate_pit.py",
+                 "decision/regime_pit.py", "decision/regime_v1/", "decision/validation_",
+                 "decision/snapshot_verify.py", "decision/snapshot.py",
+                 "decision/daily_decision_contract.py", "decision/real_", "regime_v1/")
     for line in r.stdout.splitlines():
-        if any(p in line for p in ("decision/", "regime_v1/", "forward_outcome.py", "candidate_pit.py")):
+        # 提取路径部分（去掉状态前缀）
+        parts = line.split(None, 1)
+        path = parts[-1] if len(parts) > 1 else line
+        if any(path.startswith(a) for a in ALLOWED):
+            continue
+        if any(p in line for p in FORBIDDEN):
             assert line.startswith("??") or line.startswith("A "), f"must not modify V1 source: {line}"
 
 

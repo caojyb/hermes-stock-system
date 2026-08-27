@@ -133,25 +133,38 @@ class TestPersistenceVerify(unittest.TestCase):
 
 
 class StopLossChainTest(unittest.TestCase):
-    """端到端：stop-loss run → snapshot → daily contract 可读"""
+    """端到端：stop-loss snapshot → Daily Contract 可读（确定性，无 live 依赖）"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        import decision.daily_decision_contract as ddc
+        self.ddc = ddc
+        self._orig = ddc.SNAP_DIR
+        ddc.SNAP_DIR = self.tmp
+        self.today = '2026-08-27'
+
+    def tearDown(self):
+        self.ddc.SNAP_DIR = self._orig
 
     def test_daily_reads_stoploss_snapshots(self):
-        from decision.daily_decision_contract import load_today_snapshots
-        import subprocess
-        r = subprocess.run([sys.executable, 'position_stop_loss_alert.py'],
-                           capture_output=True, text=True, timeout=120,
-                           cwd=SCRIPT_DIR)
-        self.assertEqual(r.returncode, 0)
-        if '无真实持仓数据' in r.stdout:
-            self.skipTest('Bitable 读取失败（环境噪声），由 safe run 单独验证')
-        snaps = load_today_snapshots()
+        from decision.contract import gen_decision_id, Decision
+        from decision.snapshot_verify import persist_with_verification
+        # 构造并落盘一个 canonical STOP_LOSS 快照（受控临时目录，无 live Bitable）
+        did = gen_decision_id(symbol='600001', ts=self.today.replace('-', ''))
+        dec = Decision(
+            decision_id=did, timestamp=f'{self.today}T09:30:00+00:00',
+            symbol='600001', name='测试股', action='SELL',
+            strategy='v1_double', exit_signal='STOP_LOSS',
+            exit_triggers=['STOP_LOSS'], reason_codes=['STOP_LOSS'],
+            explanation='deterministic stop-loss test', reference_price=10.0,
+            data_snapshot_id='snap_test', config_version='phase9b3', code_version='test',
+        )
+        st, path = persist_with_verification(dec, snap_dir=self.tmp)
+        self.assertIn(st, ('PERSISTED', 'PERSISTED_EXISTING'))
+        snaps = self.ddc.load_today_snapshots(self.today)
         self.assertGreaterEqual(len(snaps), 1, 'stop-loss 快照必须能被 Daily Contract 读到')
-        stop_ids = {s['decision_id'] for s in snaps if '_STOP_LOSS' or True}
-        # reconciliation: urgent(输出文本中的 id) ⊆ daily ids
-        import re
-        out_ids = set(re.findall(r'\d{4}-\d{2}-\d{2}T[\d:.]+\+00:00_\d{6}_[0-9a-f]{12}', r.stdout))
-        missing = out_ids - set(s['decision_id'] for s in snaps)
-        self.assertFalse(missing, f'stop-loss decisions 缺失于 Daily: {missing}')
+        ids = {s['decision_id'] for s in snaps}
+        self.assertIn(did, ids, '已落盘的 stop-loss 决策必须出现在 Daily 读取结果中')
 
     def test_no_executed_outcome_from_safe_run(self):
         conn = sqlite3.connect(f"file:{os.path.join(SCRIPT_DIR,'simulation.db')}?mode=ro", uri=True)

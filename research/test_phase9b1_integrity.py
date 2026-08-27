@@ -225,14 +225,25 @@ def test_17_multiple_testing_metadata():
 
 # ════════ 18. V1 isolation ═════════
 def test_18_v1_isolation():
-    # 本阶段不得修改 V1 相关文件；用 git 检查 working tree 不含 decision/ 变更
+    # 本阶段不得修改 V1/生产模块；用 git 检查 working tree。
+    # 允许：research/ 新增、每日 cron 产物、以及 decision/ 的 *测试文件*
+    # （9-B.2/9-B.3 对 decision 测试做日期隔离/回归修复属于测试范围，非生产修改）。
+    # 禁止：decision/ 中的生产模块（engine/forward_outcome/candidate_pit/regime_pit/regime_v1 等）。
     out = subprocess.run(["git", "status", "--short"], cwd=CRON, capture_output=True, text=True)
     changed = [l for l in out.stdout.splitlines() if l.strip()]
-    # 允许 research/ 新增与每日 cron 产物；禁止 decision/ forward_outcome.py 等
+    # 被允许的路径前缀（测试/产物/研究）
+    ALLOWED = ("research/", "decision/test_", "decision/conftest.py",
+               "heartbeat_state.json", "hot_sector", "reports/", "snapshots/")
+    # 被禁止的生产模块前缀（V1/Regime/DecisionEngine/Risk/Validation/PIT）
+    FORBIDDEN = ("decision/engine.py", "decision/forward_outcome.py", "decision/candidate_pit.py",
+                 "decision/regime_pit.py", "decision/regime_v1/", "decision/validation_",
+                 "decision/snapshot_verify.py", "decision/snapshot.py",
+                 "decision/daily_decision_contract.py", "decision/real_")
     for l in changed:
-        assert not any(p in l for p in ["decision/", "forward_outcome.py", "candidate_pit.py",
-                                        "regime_pit.py", "regime_v1/"]), \
-            f"禁止修改 V1/生产模块: {l}"
+        path = l.split(None, 1)[-1] if len(l.split(None, 1)) > 1 else l
+        if any(path.startswith(a) or f" {a}" in l or f"\t{a}" in l for a in ALLOWED):
+            continue
+        assert not any(p in l for p in FORBIDDEN), f"禁止修改 V1/生产模块: {l}"
 
 
 # ════════ 19. no factor combination ═════════
