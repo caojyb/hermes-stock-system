@@ -20,7 +20,40 @@ import decision.validation_integrity_gate as gate
 from decision.validation_baseline import is_validation_trade, VALIDATION_START_DATE
 
 
+# ── Phase 9-B.2：freshness 测试确定性辅助 ──
+# 原 3 个 freshness 测试硬断言 market_cache_latest=='2026-08-26'，但 production
+# _check_B_data_freshness 查询 LIVE market_cache.db（随 cron 刷新漂移）→ 测试日期污染。
+# 此处构建确定性临时 market_cache DB（klines MAX(date)=FIXED_MARKET_DATE），
+# 在 setUp 注入、tearDown 还原，使测试不再耦合实时 DB 快照。production 代码零修改。
+FIXED_MARKET_DATE = '2026-08-26'
+
+
+def _patch_market_cache_to_fixed() -> str:
+    import sqlite3
+    import tempfile
+    from pathlib import Path
+    tmp = Path(tempfile.mkdtemp()) / 'market_cache_fixed.db'
+    con = sqlite3.connect(tmp)
+    con.execute('CREATE TABLE klines (date TEXT)')
+    con.execute('INSERT INTO klines (date) VALUES (?)', (FIXED_MARKET_DATE,))
+    con.commit()
+    con.close()
+    orig = gate.KNOWN_PRODUCTION_DBS['market_cache']
+    gate.KNOWN_PRODUCTION_DBS['market_cache'] = str(tmp)
+    return orig
+
+
+def _restore_market_cache(orig: str) -> None:
+    gate.KNOWN_PRODUCTION_DBS['market_cache'] = orig
+
+
 class TestCleanValidation(unittest.TestCase):
+
+    def setUp(self):
+        self._orig_mc = _patch_market_cache_to_fixed()
+
+    def tearDown(self):
+        _restore_market_cache(self._orig_mc)
 
     def test_freshness_stale_yields_degraded_not_clean(self):
         # 修复后：market_cache latest=2026-08-26 < validation 8/27 → STALE → DEGRADED
@@ -118,6 +151,12 @@ class TestWrongDBDetection(unittest.TestCase):
 
 
 class TestStaleAndMissingData(unittest.TestCase):
+
+    def setUp(self):
+        self._orig_mc = _patch_market_cache_to_fixed()
+
+    def tearDown(self):
+        _restore_market_cache(self._orig_mc)
 
     def test_stale_not_ready(self):
         r = gate.evaluate_gate('2026-08-27')
