@@ -101,7 +101,7 @@ def fetch_all_northbound():
 
 def update_db(north_data, pool_codes=None):
     """更新数据库中的北向资金数据"""
-    conn = sqlite3.connect(MKT_DB)
+    conn = sqlite3.connect(MKT_DB, timeout=60)
     cur = conn.cursor()
     
     # 确保字段存在
@@ -315,7 +315,7 @@ def run(pool_codes=None):
 
     # 回退：从本地数据库补全股票名称，避免北向报告只显示代码
     try:
-        db_conn = sqlite3.connect(MKT_DB)
+        db_conn = sqlite3.connect(MKT_DB, timeout=60)
         db_cur = db_conn.cursor()
         db_cur.execute('SELECT code, name FROM stocks WHERE name IS NOT NULL AND name != ""')
         for code, name in db_cur.fetchall():
